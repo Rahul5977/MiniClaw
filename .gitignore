@@ -201,6 +201,6 @@ dist
 !.env.example
 
 # MiniClaw runtime data
-data/
-workspace/
-miniclaw.config.json
+/data/
+/workspace/
+/miniclaw.config.json
