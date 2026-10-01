@@ -16,7 +16,7 @@ const ICON: Record<Status, string> = {
 
 /** Runs setup checks, prints them, and returns false if any check failed. */
 export async function runDoctor(overrides: { model?: string } = {}): Promise<boolean> {
-  const checks: Check[] = [{ status: "ok", label: `Bun ${Bun.version}` }];
+  const checks: Check[] = [{ status: "ok", label: `Bun ${Bun.version}` }, checkGit()];
   const print = () => {
     for (const c of checks) {
       console.log(`${ICON[c.status]} ${c.label}`);
@@ -37,6 +37,21 @@ export async function runDoctor(overrides: { model?: string } = {}): Promise<boo
   checks.push(...(await checkLlm(config.llm)));
   print();
   return checks.every((c) => c.status !== "fail");
+}
+
+/** /undo (I-1) stores workspace checkpoints with git. */
+function checkGit(): Check {
+  try {
+    const git = Bun.spawnSync(["git", "--version"], { stdout: "pipe", stderr: "pipe" });
+    if (git.success) return { status: "ok", label: git.stdout.toString().trim() };
+  } catch {
+    // Not on PATH.
+  }
+  return {
+    status: "fail",
+    label: "git is not installed",
+    hint: "MiniClaw uses git for /undo. Install it with `xcode-select --install` or your package manager.",
+  };
 }
 
 async function checkLlm(llm: Config["llm"]): Promise<Check[]> {
