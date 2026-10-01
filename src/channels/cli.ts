@@ -59,9 +59,10 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     let reply = "";
     output.write(cyan(`${config.agent.name.toLowerCase()} › `));
     try {
-      for await (const token of llm.stream(session.messages(), { signal: current.signal })) {
-        reply += token;
-        output.write(token);
+      for await (const event of llm.stream(session.messages(), { signal: current.signal })) {
+        if (event.type !== "text") continue;
+        reply += event.delta;
+        output.write(event.delta);
       }
       output.write("\n\n");
     } catch (error) {
