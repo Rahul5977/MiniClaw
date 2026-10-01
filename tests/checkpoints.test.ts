@@ -38,6 +38,7 @@ test("agent actions are checkpointed and undone in order", async () => {
 
   const result = await cp.undo();
   expect(result?.undone.map((c) => c.summary)).toEqual(["rewrite notes and delete existing"]);
+  expect(result?.files.sort()).toEqual(["A\texisting.txt", "M\tnotes.md"]);
   expect(readFileSync(file("notes.md"), "utf8")).toBe("v1");
   expect(readFileSync(file("existing.txt"), "utf8")).toBe("from user");
 

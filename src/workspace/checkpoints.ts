@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export interface Checkpoint {
   sha: string;
@@ -16,10 +16,14 @@ const AGENT_PREFIX = "agent: ";
  * can't see, edit or delete the history.
  */
 export class Checkpoints {
-  constructor(
-    private gitDir: string,
-    private workTree: string,
-  ) {}
+  private gitDir: string;
+  private workTree: string;
+
+  constructor(gitDir: string, workTree: string) {
+    // Absolute, because git runs with the workspace as its working directory.
+    this.gitDir = resolve(gitDir);
+    this.workTree = resolve(workTree);
+  }
 
   private async git(args: string[]): Promise<{ out: string }> {
     const proc = Bun.spawn(
@@ -97,7 +101,8 @@ export class Checkpoints {
     const oldest = history[n - 1];
     if (!oldest) return null;
     const target = `${oldest.sha}^`;
-    const files = (await this.git(["diff", "--name-status", target, "HEAD"])).out.split("\n").filter(Boolean);
+    // What undoing does to the workspace, e.g. ["D\tsummary.md"] for a file the agent had created.
+    const files = (await this.git(["diff", "--name-status", "HEAD", target])).out.split("\n").filter(Boolean);
     await this.git(["reset", "--quiet", "--hard", target]);
     return { undone: history, files };
   }
