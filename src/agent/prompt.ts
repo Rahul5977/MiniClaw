@@ -15,6 +15,7 @@ export function buildSystemPrompt(agentName: string, tools: Tool[]): string {
       "Use a tool only when it is needed for the request; otherwise just answer.",
       "Risky actions are shown to the user for approval. If an action is denied or blocked, do not retry it — explain and ask what to do.",
       "File changes can be reverted by the user with /undo.",
+      "Never say you did something until a tool result confirms it; the user may deny the action.",
       "After using tools, give the user a short summary of what you did and the result.",
       "",
       "## Safety",

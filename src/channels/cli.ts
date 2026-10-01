@@ -1,33 +1,71 @@
-import { APIConnectionError } from "openai";
-import { createInterface } from "node:readline";
+import { join } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
+import { createInterface, type Interface } from "node:readline";
+import { APIConnectionError } from "openai";
+import { Agent, type AgentEvent } from "../agent/agent.ts";
 import { buildSystemPrompt } from "../agent/prompt.ts";
 import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
 import type { LLMProvider } from "../llm/provider.ts";
+import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
+import { AuditLog } from "../security/audit.ts";
+import { prepareWorkspace } from "../security/sandbox.ts";
+import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
+import { runShellTool } from "../tools/shell.ts";
+import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
+import { webFetchTool } from "../tools/web.ts";
+import { Checkpoints } from "../workspace/checkpoints.ts";
 
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
-const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+const color = (code: number) => (s: string) => `\x1b[${code}m${s}\x1b[0m`;
+const dim = color(2);
+const red = color(31);
+const green = color(32);
+const yellow = color(33);
+const cyan = color(36);
+const bold = color(1);
+
+const RISK_COLOR: Record<RiskLevel, (s: string) => string> = { low: dim, medium: yellow, high: red, blocked: red };
 
 const HELP = `Commands:
-  /new    start a new conversation
-  /help   show this help
-  /exit   quit (or press Ctrl+D)
-While the agent is replying, press Ctrl+C to stop it.`;
+  /undo [n]   undo the last n file changes made by the agent (default 1)
+  /history    list recent agent changes that can be undone
+  /tools      list the tools the agent can use
+  /new        start a new conversation (also forgets "always allow" approvals)
+  /help       show this help
+  /exit       quit (or press Ctrl+D)
+While the agent is working, press Ctrl+C to stop it.`;
 
 export async function startCliChat(config: Config, llm: LLMProvider): Promise<void> {
-  const session = new Session(buildSystemPrompt(config.agent.name, []), config.agent.historyLimit);
+  const workspace = prepareWorkspace(config.paths.workspace);
+  const checkpoints = new Checkpoints(join(config.paths.data, "checkpoints.git"), workspace);
+  await checkpoints.init();
+
+  const tools = new ToolRegistry([readFileTool, listDirTool, writeFileTool, runShellTool, webFetchTool]);
+  const session = new Session(buildSystemPrompt(config.agent.name, tools.list()), config.agent.historyLimit);
+  const policy = new ApprovalPolicy();
   const rl = createInterface({ input, output, prompt: cyan("you › ") });
 
-  // Ctrl+C stops the current reply if one is streaming, otherwise quits.
+  // Ctrl+C stops the current run (including an open approval prompt), otherwise quits.
   let current: AbortController | null = null;
   rl.on("SIGINT", () => {
     if (current) current.abort();
     else rl.close();
   });
 
+  const agent = new Agent({
+    llm,
+    tools,
+    policy,
+    approver: new CliApprover(rl, () => current?.signal),
+    audit: new AuditLog(join(config.paths.data, "audit.jsonl")),
+    checkpoints,
+    workspace,
+    sessionId: "cli:default",
+    maxSteps: config.agent.maxSteps,
+  });
+
   console.log(cyan(`🦀 ${config.agent.name}`) + dim(` · model ${llm.model} · ${config.llm.baseURL}`));
+  console.log(dim(`Workspace: ${workspace}`));
   console.log(dim("Type /help for commands.\n"));
 
   // Iterating (instead of rl.question) buffers lines, so pasted or piped input isn't lost.
@@ -35,55 +73,190 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   rl.prompt();
   for await (const raw of rl) {
     const line = raw.trim();
-    if (!line) {
-      rl.prompt();
-      continue;
-    }
-
     if (line.startsWith("/")) {
-      const command = line.slice(1).toLowerCase();
+      const [command = "", arg] = line.slice(1).split(/\s+/);
       if (command === "exit" || command === "quit") break;
-      if (command === "new") {
-        session.reset();
-        console.log(dim("Started a new conversation.\n"));
-      } else if (command === "help") {
-        console.log(HELP + "\n");
-      } else {
-        console.log(red(`Unknown command: ${line}`) + dim(" (try /help)\n"));
-      }
-      rl.prompt();
-      continue;
+      await runCommand(command.toLowerCase(), arg);
+    } else if (line) {
+      await runAgent(line);
     }
+    rl.prompt();
+  }
 
-    current = new AbortController();
-    let reply = "";
-    output.write(cyan(`${config.agent.name.toLowerCase()} › `));
-    try {
-      const messages = [...session.messages(), { role: "user" as const, content: line }];
-      for await (const event of llm.stream(messages, { signal: current.signal })) {
-        if (event.type !== "text") continue;
-        reply += event.delta;
-        output.write(event.delta);
+  rl.close();
+  console.log(dim("Bye! 👋"));
+
+  async function runCommand(command: string, arg?: string): Promise<void> {
+    switch (command) {
+      case "new":
+        session.reset();
+        policy.reset();
+        console.log(dim("Started a new conversation.\n"));
+        return;
+      case "undo": {
+        const n = arg ? Number(arg) : 1;
+        if (!Number.isInteger(n) || n < 1) return void console.log(red("Usage: /undo [n]\n"));
+        const result = await checkpoints.undo(n);
+        if (!result) return void console.log(dim("Nothing to undo.\n"));
+        for (const c of result.undone) console.log(green("↶ undone: ") + c.summary);
+        console.log(dim(`  reverted: ${formatChanges(result.files) || "(no file changes)"}\n`));
+        return;
       }
-      output.write("\n\n");
+      case "history": {
+        const history = await checkpoints.history(10);
+        if (history.length === 0) return void console.log(dim("No agent changes yet.\n"));
+        history.forEach((c, i) => console.log(`${dim(`${i + 1}.`)} ${c.summary} ${dim(`(${c.when})`)}`));
+        console.log(dim("Use /undo n to undo the latest n changes.\n"));
+        return;
+      }
+      case "tools":
+        for (const tool of tools.list()) console.log(`${bold(tool.name)} ${dim("— " + tool.description)}`);
+        console.log();
+        return;
+      case "help":
+        console.log(HELP + "\n");
+        return;
+      default:
+        console.log(red(`Unknown command: /${command}`) + dim(" (try /help)\n"));
+    }
+  }
+
+  async function runAgent(text: string): Promise<void> {
+    current = new AbortController();
+    const renderer = new Renderer(config.agent.name.toLowerCase());
+    try {
+      for await (const event of agent.run(session, text, current.signal)) renderer.render(event);
+      renderer.end();
     } catch (error) {
-      if (current.signal.aborted) {
-        output.write(dim(" [stopped]") + "\n\n");
-      } else {
-        output.write("\n");
+      renderer.end();
+      if (current.signal.aborted) console.log(dim("[stopped]\n"));
+      else {
         console.error(red(`Error: ${describeError(error)}`));
         console.error(dim("Run `miniclaw doctor` to check your setup.\n"));
       }
     } finally {
       current = null;
     }
+  }
+}
 
-    if (reply) session.addTurn([{ role: "user", content: line }, { role: "assistant", content: reply }]);
-    rl.prompt();
+/** Prints agent events: streamed text, plus one status line per tool call. */
+class Renderer {
+  private inText = false;
+
+  constructor(private name: string) {}
+
+  render(event: AgentEvent): void {
+    switch (event.type) {
+      case "text":
+        if (!this.inText) output.write(cyan(`${this.name} › `));
+        this.inText = true;
+        output.write(event.delta);
+        return;
+      case "tool_start":
+        this.breakLine();
+        console.log(`  ${RISK_COLOR[event.risk.level]("⚙")} ${event.summary} ${dim(`[${event.risk.level}]`)}`);
+        return;
+      case "tool_end": {
+        const first = event.output.split("\n")[0]?.slice(0, 100) ?? "";
+        if (event.verdict === "blocked") console.log(red("    ✖ blocked by safety rules"));
+        else if (event.verdict === "denied") console.log(yellow("    ✖ denied"));
+        else if (event.verdict === "invalid") console.log(yellow(`    ✖ invalid call, the model will retry: ${dim(first)}`));
+        else if (!event.ok) console.log(red(`    ✖ ${first}`));
+        else {
+          const how = event.verdict === "session" || event.verdict === "plan" ? dim(` (${event.verdict}-approved)`) : "";
+          const changed = event.changes.length ? dim(` · changed ${formatChanges(event.changes)}`) : "";
+          console.log(green("    ✔ done") + how + changed);
+        }
+        return;
+      }
+      case "step_limit":
+        this.breakLine();
+        console.log(yellow(`  ! reached the limit of ${event.maxSteps} steps`));
+        return;
+    }
   }
 
-  rl.close();
-  console.log(dim("Bye! 👋"));
+  end(): void {
+    if (this.inText) output.write("\n");
+    output.write("\n");
+    this.inText = false;
+  }
+
+  private breakLine(): void {
+    if (this.inText) output.write("\n");
+    this.inText = false;
+  }
+}
+
+/** Asks for approval in the terminal. Ctrl+C while asking counts as "no". */
+class CliApprover implements Approver {
+  constructor(
+    private rl: Interface,
+    private signal: () => AbortSignal | undefined,
+  ) {}
+
+  async ask(request: ApprovalRequest): Promise<Decision> {
+    const { risk } = request;
+    for (const reason of risk.reasons) console.log(`    ${RISK_COLOR[risk.level]("•")} ${reason}`);
+    if (request.preview) console.log(colorDiff(request.preview));
+
+    const target = risk.scope.slice(risk.scope.indexOf(":") + 1);
+    const options = risk.sessionApprovable
+      ? `${bold("y")}es / ${bold("n")}o / ${bold("a")}lways allow ${target} this session`
+      : `${bold("y")}es / ${bold("n")}o`;
+
+    while (true) {
+      const answer = await this.question(`    Allow? ${dim("[")}${options}${dim("]")} `);
+      if (answer === null) return "deny";
+      const a = answer.trim().toLowerCase();
+      if (a === "y" || a === "yes") return "approve";
+      if (a === "n" || a === "no" || a === "") return "deny";
+      if ((a === "a" || a === "always") && risk.sessionApprovable) return "approve_session";
+    }
+  }
+
+  /** Resolves null if the run is aborted (Ctrl+C) while waiting for an answer. */
+  private question(prompt: string): Promise<string | null> {
+    const signal = this.signal();
+    if (signal?.aborted) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const onAbort = () => {
+        output.write("\n");
+        resolve(null);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      // Passing the signal cancels the pending question, so it can't swallow the next line typed.
+      this.rl.question(prompt, { signal }, (answer) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(answer);
+      });
+    });
+  }
+}
+
+function colorDiff(diff: string): string {
+  return diff
+    .split("\n")
+    .map((line) => {
+      const indented = `      ${line}`;
+      if (line.startsWith("+")) return green(indented);
+      if (line.startsWith("-")) return red(indented);
+      if (line.startsWith("@@")) return cyan(indented);
+      return dim(indented);
+    })
+    .join("\n");
+}
+
+/** ["A\tnew.md", "M\tnotes.md"] → "+new.md ~notes.md" */
+function formatChanges(changes: string[]): string {
+  const marks: Record<string, string> = { A: "+", M: "~", D: "-" };
+  return changes
+    .map((change) => {
+      const [status = "", ...paths] = change.split("\t");
+      return `${marks[status[0] ?? ""] ?? status}${paths.at(-1)}`;
+    })
+    .join(" ");
 }
 
 function describeError(error: unknown): string {

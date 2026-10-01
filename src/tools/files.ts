@@ -104,7 +104,8 @@ export const writeFileTool = defineTool({
     const before = (await readIfExists(abs)) ?? "";
     const after = args.append ? before + args.content : args.content;
     const patch = createTwoFilesPatch(args.path, args.path, before, after, "", "", { context: 2 });
-    const lines = patch.split("\n").slice(4); // drop the "Index/===/---/+++" header
+    // Drop the "Index/===/---/+++" header and git's "\ No newline at end of file" markers.
+    const lines = patch.split("\n").slice(4).filter((line) => !line.startsWith("\\"));
     return lines.length > MAX_DIFF_LINES
       ? [...lines.slice(0, MAX_DIFF_LINES), `… ${lines.length - MAX_DIFF_LINES} more diff lines`].join("\n")
       : lines.join("\n");
