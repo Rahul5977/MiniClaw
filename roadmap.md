@@ -116,12 +116,16 @@ report a clear **"novel contribution"** chapter with something to measure.
 - Shell commands run inside the workspace, so their file changes are covered too.
 - **Why it matters:** approvals are only a guess about what will happen. Undo makes mistakes recoverable.
 - **Measure:** % of destructive test scenarios fully recovered by `/undo`.
-- **Phase:** 2 (with the file tools).
+- **Phase:** 2 (with the file tools). **Status:** implemented (`src/workspace/checkpoints.ts`). The git directory lives in `data/checkpoints.git`, *outside* the workspace, so the agent cannot tamper with its own history.
 
 ### I-2. Plan Preview Mode — *Must*
 - For multi-step tasks the agent first outputs a structured **plan** (`[{tool, args, why}]`) without running anything.
-- The user sees one summary with **file diffs** for `write_file`, then picks *Approve all* / *Edit* / *Reject*.
+- Every step is risk-scored with the same rules used at execution time. The user approves the whole plan once.
+- Approval pre-authorizes only the plan's **medium-risk** steps; high-risk steps still ask, blocked steps never run.
+- When the plan finishes, MiniClaw shows a **diff summary** of everything it changed and the `/undo n` that reverts it all.
+  (File contents aren't known until the model writes them, so diffs are shown afterwards, with undo as the safety net.)
 - During execution, any call that is **not in the approved plan** goes back to normal approval.
+- **Status:** implemented in Phase 2 (`src/agent/planner.ts`).
 - **Why it matters:** fewer approval prompts, so users don't get tired and approve everything blindly.
 - **Measure:** approvals per task, and task success rate with and without plan mode.
 - **Phase:** 2–3.
@@ -142,7 +146,7 @@ report a clear **"novel contribution"** chapter with something to measure.
 - Policy: low = auto, medium = ask once per session, high = always ask with a **reason**
   (*"deletes 14 files"*, *"sends data to an unknown domain"*).
 - **Measure:** fewer prompts than ask-every-time while catching all high-risk test cases.
-- **Phase:** 2 (basic), 7 (combined with taint).
+- **Phase:** 2 (basic), 7 (combined with taint). **Status:** basic version implemented (`src/security/risk.ts`, `src/security/approvals.ts`).
 
 ### I-5. Memory Inbox, Expiry & Right-to-Forget — *Should*
 - The `remember` tool puts facts in a **pending inbox**, not straight into `MEMORY.md`. The user confirms
@@ -566,16 +570,16 @@ export interface Channel {
 - **Milestone M1:** Multi-turn chat with local model in terminal. ✅
 
 ### Phase 2 — Agent Loop + Tools (Week 5–7)  ⭐ core of the project
-- [ ] Tool registry + zod → JSON-Schema conversion.
-- [ ] Agent loop (§5.2) with `MAX_STEPS`, timeouts, error-as-observation.
-- [ ] Tools: `read_file`, `write_file`, `list_dir` (sandboxed), `run_shell`, `web_fetch` (HTML → text, size cap).
-- [ ] Approval manager (CLI yes/no prompt first).
-- [ ] Audit logger.
-- [ ] Handle small-model quirks: malformed JSON args → retry with error message.
-- [ ] 🚀 **I-1 Undo:** git-backed workspace checkpoints + `/undo`, `/history`.
-- [ ] 🚀 **I-4 Risk scorer** (rules) driving the approval policy.
-- [ ] 🚀 **I-2 Plan preview** (basic: list of steps + diffs, approve all).
-- **Milestone M2:** "Read notes.txt and write a summary to summary.md" works end-to-end with approval.
+- [x] Tool registry + zod → JSON-Schema conversion.
+- [x] Agent loop (§5.2) with `MAX_STEPS`, timeouts, error-as-observation.
+- [x] Tools: `read_file`, `write_file`, `list_dir` (sandboxed), `run_shell`, `web_fetch` (HTML → text, size cap).
+- [x] Approval manager (CLI yes/no prompt first).
+- [x] Audit logger (JSON Lines in `data/audit.jsonl`, secrets redacted; moves to SQLite in Phase 3).
+- [x] Handle small-model quirks: malformed JSON args → retry with error message.
+- [x] 🚀 **I-1 Undo:** git-backed workspace checkpoints + `/undo`, `/history`.
+- [x] 🚀 **I-4 Risk scorer** (rules) driving the approval policy.
+- [x] 🚀 **I-2 Plan preview:** `/plan <task>` → risk-scored steps → approve once → diff summary + `/undo n` afterwards.
+- **Milestone M2:** "Read notes.txt and write a summary to summary.md" works end-to-end with approval. ✅
 
 ### Phase 3 — Persistence & Memory (Week 8–9)
 - [ ] SQLite schema + migrations; sessions & message history.
