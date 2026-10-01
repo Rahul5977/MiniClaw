@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { createInterface, type Interface } from "node:readline";
 import { APIConnectionError } from "openai";
 import { Agent, type AgentEvent } from "../agent/agent.ts";
+import { createPlan, planScopes, planTask } from "../agent/planner.ts";
 import { buildSystemPrompt } from "../agent/prompt.ts";
 import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
@@ -27,6 +28,7 @@ const bold = color(1);
 const RISK_COLOR: Record<RiskLevel, (s: string) => string> = { low: dim, medium: yellow, high: red, blocked: red };
 
 const HELP = `Commands:
+  /plan <task> preview the agent's plan with risk levels, approve it once, then run it
   /undo [n]   undo the last n file changes made by the agent (default 1)
   /history    list recent agent changes that can be undone
   /tools      list the tools the agent can use
@@ -52,11 +54,12 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     else rl.close();
   });
 
+  const approver = new CliApprover(rl, () => current?.signal);
   const agent = new Agent({
     llm,
     tools,
     policy,
-    approver: new CliApprover(rl, () => current?.signal),
+    approver,
     audit: new AuditLog(join(config.paths.data, "audit.jsonl")),
     checkpoints,
     workspace,
@@ -74,9 +77,9 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   for await (const raw of rl) {
     const line = raw.trim();
     if (line.startsWith("/")) {
-      const [command = "", arg] = line.slice(1).split(/\s+/);
+      const [command = "", ...rest] = line.slice(1).split(/\s+/);
       if (command === "exit" || command === "quit") break;
-      await runCommand(command.toLowerCase(), arg);
+      await runCommand(command.toLowerCase(), rest.join(" ") || undefined);
     } else if (line) {
       await runAgent(line);
     }
@@ -109,6 +112,10 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
         console.log(dim("Use /undo n to undo the latest n changes.\n"));
         return;
       }
+      case "plan":
+        if (!arg) return void console.log(red("Usage: /plan <task>\n"));
+        await runPlan(arg);
+        return;
       case "tools":
         for (const tool of tools.list()) console.log(`${bold(tool.name)} ${dim("— " + tool.description)}`);
         console.log();
@@ -118,6 +125,47 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
         return;
       default:
         console.log(red(`Unknown command: /${command}`) + dim(" (try /help)\n"));
+    }
+  }
+
+  /** I-2: plan → show risk per step → approve once → run → summarize changes. */
+  async function runPlan(task: string): Promise<void> {
+    current = new AbortController();
+    let steps;
+    try {
+      console.log(dim("Planning…"));
+      steps = await createPlan(llm, tools, task, { workspace, signal: current.signal });
+    } catch (error) {
+      if (current.signal.aborted) console.log(dim("[stopped]\n"));
+      else console.error(red(`Error: ${describeError(error)}\n`));
+      current = null;
+      return;
+    }
+
+    console.log(bold("\nPlan:"));
+    steps.forEach((step, i) => {
+      const { level, reasons } = step.risk;
+      console.log(`  ${dim(`${i + 1}.`)} ${RISK_COLOR[level]("⚙")} ${step.tool} ${bold(step.target)} ${dim(`[${level}]`)} ${dim("— " + step.why)}`);
+      if (level === "high" || level === "blocked") for (const r of reasons) console.log(`       ${RISK_COLOR[level]("•")} ${r}`);
+    });
+    console.log(dim("Approving lets the medium-risk steps run without asking again. High-risk steps still ask; blocked steps never run."));
+
+    const ok = await approver.confirm("Run this plan?");
+    current = null;
+    if (!ok) return void console.log(dim("Plan cancelled.\n"));
+
+    const start = await checkpoints.head();
+    policy.allowPlan(planScopes(steps));
+    try {
+      await runAgent(planTask(task, steps));
+    } finally {
+      policy.clearPlan();
+    }
+    const { stat, actions } = await checkpoints.changesSince(start);
+    if (actions > 0) {
+      console.log(bold("Changes made by this plan:"));
+      console.log(dim(stat));
+      console.log(dim(`Use /undo ${actions} to revert all of them.\n`));
     }
   }
 
@@ -214,6 +262,11 @@ class CliApprover implements Approver {
       if (a === "n" || a === "no" || a === "") return "deny";
       if ((a === "a" || a === "always") && risk.sessionApprovable) return "approve_session";
     }
+  }
+
+  async confirm(prompt: string): Promise<boolean> {
+    const answer = await this.question(`${prompt} ${dim("[")}${bold("y")}es / ${bold("n")}o${dim("]")} `);
+    return answer !== null && /^y(es)?$/i.test(answer.trim());
   }
 
   /** Resolves null if the run is aborted (Ctrl+C) while waiting for an answer. */

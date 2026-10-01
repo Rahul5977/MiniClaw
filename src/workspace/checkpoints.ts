@@ -107,8 +107,11 @@ export class Checkpoints {
     return { undone: history, files };
   }
 
-  /** Files changed since a checkpoint (used for the plan-mode summary). */
-  async changesSince(sha: string): Promise<string> {
-    return (await this.git(["diff", "--stat", sha, "HEAD"])).out;
+  /** Diff summary and number of agent actions since a checkpoint (used for the plan summary). */
+  async changesSince(sha: string): Promise<{ stat: string; actions: number }> {
+    const stat = (await this.git(["diff", "--stat", sha, "HEAD"])).out;
+    const log = (await this.git(["log", "--first-parent", "--format=%s", `${sha}..HEAD`])).out;
+    const actions = log.split("\n").filter((s) => s.startsWith(AGENT_PREFIX)).length;
+    return { stat, actions };
   }
 }
