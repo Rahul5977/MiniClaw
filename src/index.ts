@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { startCliChat } from "./channels/cli.ts";
 import { loadConfig } from "./config.ts";
+import { runDoctor } from "./doctor.ts";
 import { OpenAICompatibleProvider } from "./llm/openaiCompatible.ts";
 
 const program = new Command();
@@ -18,6 +19,15 @@ program
   .action(async (options: { model?: string }) => {
     const config = loadConfig({ model: options.model });
     await startCliChat(config, new OpenAICompatibleProvider(config.llm));
+  });
+
+program
+  .command("doctor")
+  .description("Check that MiniClaw is set up correctly")
+  .option("-m, --model <name>", "check this model instead of the configured one")
+  .action(async (options: { model?: string }) => {
+    const ok = await runDoctor({ model: options.model });
+    process.exitCode = ok ? 0 : 1;
   });
 
 try {

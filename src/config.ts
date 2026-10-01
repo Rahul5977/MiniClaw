@@ -5,7 +5,7 @@ import { z } from "zod";
 const ConfigSchema = z.object({
   llm: z.object({
     baseURL: z.url().default("http://localhost:11434/v1"),
-    model: z.string().min(1).default("qwen2.5:7b"),
+    model: z.string().trim().min(1).default("qwen2.5:7b"),
     // Ollama ignores the key, but the OpenAI client requires a non-empty one.
     apiKey: z.string().min(1).default("ollama"),
     temperature: z.number().min(0).max(2).default(0.7),
