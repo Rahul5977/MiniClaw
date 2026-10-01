@@ -558,12 +558,12 @@ export interface Channel {
 - **Milestone M0:** Approved synopsis + this roadmap.
 
 ### Phase 1 — Foundations: CLI + LLM (Week 3–4)
-- [ ] Migrate to TypeScript; set up `src/` layout.
-- [ ] `config.ts` (env + JSON, validated with zod).
-- [ ] `LLMProvider` + `openaiCompatible.ts` (Ollama default).
-- [ ] `miniclaw chat` REPL with streaming output and `--model` flag.
-- [ ] `miniclaw doctor` — checks Ollama running, model pulled, config valid.
-- **Milestone M1:** Multi-turn chat with local model in terminal.
+- [x] Migrate to TypeScript; set up `src/` layout.
+- [x] `config.ts` (env + JSON, validated with zod).
+- [x] `LLMProvider` + `openaiCompatible.ts` (Ollama default).
+- [x] `miniclaw chat` REPL with streaming output and `--model` flag.
+- [x] `miniclaw doctor` — checks Ollama running, model pulled, config valid.
+- **Milestone M1:** Multi-turn chat with local model in terminal. ✅
 
 ### Phase 2 — Agent Loop + Tools (Week 5–7)  ⭐ core of the project
 - [ ] Tool registry + zod → JSON-Schema conversion.
