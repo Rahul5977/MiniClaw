@@ -28,6 +28,10 @@ export interface Tool<A = any> {
   changesWorkspace: boolean;
   /** Rule-based risk assessment (no model involved) — see security/risk.ts. */
   assess(args: A, ctx: ToolContext): Risk | Promise<Risk>;
+  /** What a plan step's "target" means for this tool, e.g. "file path" (I-2). */
+  targetHint: string;
+  /** Risk of a planned step, known only by its target (path, command or URL). Must yield the same scope as assess(). */
+  assessTarget(target: string, ctx: ToolContext): Risk;
   /** Short one-line description of the call, for prompts, logs and undo history. */
   summarize(args: A): string;
   /** Optional detail for the approval prompt, e.g. a diff of a file write. */

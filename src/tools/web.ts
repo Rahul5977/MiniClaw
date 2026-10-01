@@ -53,7 +53,9 @@ export const webFetchTool = defineTool({
     url: z.string().describe("Full URL starting with http:// or https://"),
   }),
   changesWorkspace: false,
+  targetHint: "full URL",
   assess: (args) => assessUrl(args.url),
+  assessTarget: (target) => assessUrl(target),
   summarize: (args) => `fetch ${args.url}`,
   async run(args, ctx) {
     const approved = assessUrl(args.url);

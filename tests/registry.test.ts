@@ -7,7 +7,9 @@ const echo = defineTool({
   description: "Echo text back",
   schema: z.object({ text: z.string() }),
   changesWorkspace: false,
+  targetHint: "text",
   assess: () => ({ level: "low", reasons: [], scope: "echo", sessionApprovable: true }),
+  assessTarget: () => ({ level: "low", reasons: [], scope: "echo", sessionApprovable: true }),
   summarize: (a) => `echo ${a.text}`,
   run: async (a) => a.text,
 });

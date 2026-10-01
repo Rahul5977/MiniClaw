@@ -5,11 +5,21 @@ import { z } from "zod";
 import { makeRisk } from "../security/risk.ts";
 import { displayPath, resolveInWorkspace } from "../security/sandbox.ts";
 import { truncate, untrusted } from "./format.ts";
-import { defineTool } from "./tool.ts";
+import { defineTool, type Risk, type ToolContext } from "./tool.ts";
 
 const MAX_READ_CHARS = 20_000;
 const MAX_LIST_ENTRIES = 200;
 const MAX_DIFF_LINES = 60;
+
+function readRisk(target: string, ctx: ToolContext): Risk {
+  const path = displayPath(ctx.workspace, resolveInWorkspace(ctx.workspace, target));
+  return makeRisk("low", `read_file:${path}`, ["reads a file inside the workspace"]);
+}
+
+function listRisk(target: string, ctx: ToolContext): Risk {
+  const path = displayPath(ctx.workspace, resolveInWorkspace(ctx.workspace, target));
+  return makeRisk("low", `list_dir:${path}`, ["lists a folder inside the workspace"]);
+}
 
 async function readIfExists(path: string): Promise<string | undefined> {
   try {
@@ -26,10 +36,9 @@ export const readFileTool = defineTool({
     path: z.string().describe("File path relative to the workspace"),
   }),
   changesWorkspace: false,
-  assess: (args, ctx) => {
-    const path = displayPath(ctx.workspace, resolveInWorkspace(ctx.workspace, args.path));
-    return makeRisk("low", `read_file:${path}`, ["reads a file inside the workspace"]);
-  },
+  targetHint: "file path",
+  assess: (args, ctx) => readRisk(args.path, ctx),
+  assessTarget: readRisk,
   summarize: (args) => `read ${args.path}`,
   async run(args, ctx) {
     const path = resolveInWorkspace(ctx.workspace, args.path);
@@ -47,10 +56,9 @@ export const listDirTool = defineTool({
     depth: z.number().int().min(1).max(4).default(1).describe("How many levels deep to list (1-4)"),
   }),
   changesWorkspace: false,
-  assess: (args, ctx) => {
-    const path = displayPath(ctx.workspace, resolveInWorkspace(ctx.workspace, args.path));
-    return makeRisk("low", `list_dir:${path}`, ["lists a folder inside the workspace"]);
-  },
+  targetHint: "folder path",
+  assess: (args, ctx) => listRisk(args.path, ctx),
+  assessTarget: listRisk,
   summarize: (args) => `list ${args.path}`,
   async run(args, ctx) {
     const root = resolveInWorkspace(ctx.workspace, args.path);
@@ -85,6 +93,11 @@ export const writeFileTool = defineTool({
     append: z.boolean().default(false).describe("Append instead of overwriting"),
   }),
   changesWorkspace: true,
+  targetHint: "file path",
+  assessTarget: (target, ctx) => {
+    const path = displayPath(ctx.workspace, resolveInWorkspace(ctx.workspace, target));
+    return makeRisk("medium", `write_file:${path}`, [`writes ${path}`, "can be reverted with /undo"]);
+  },
   async assess(args, ctx) {
     const abs = resolveInWorkspace(ctx.workspace, args.path);
     const path = displayPath(ctx.workspace, abs);

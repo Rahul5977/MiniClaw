@@ -29,7 +29,9 @@ export const runShellTool = defineTool({
     command: z.string().min(1).describe("The shell command to run (sh syntax)"),
   }),
   changesWorkspace: true,
+  targetHint: "the exact shell command",
   assess: (args) => assessShellCommand(args.command),
+  assessTarget: (target) => assessShellCommand(target),
   summarize: (args) => `run \`${args.command}\``,
   async run(args, ctx) {
     const proc = Bun.spawn(["/bin/sh", "-c", args.command], {
