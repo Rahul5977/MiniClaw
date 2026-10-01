@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { Command } from "commander";
 
 const program = new Command();
@@ -18,4 +18,4 @@ program
 
 
 
-await program.parseAsync(program.argv);
+await program.parseAsync(process.argv);

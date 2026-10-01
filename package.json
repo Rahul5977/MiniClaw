@@ -1,26 +1,36 @@
 {
-  "name": "OpenClaw",
+  "name": "miniclaw",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A minimal, self-hosted, security-first personal AI agent inspired by OpenClaw",
+  "main": "src/index.ts",
   "type": "module",
   "bin": {
-    "miniClaw": "index.js"
+    "miniclaw": "src/index.ts"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "bun src/index.ts",
+    "chat": "bun src/index.ts chat",
+    "doctor": "bun src/index.ts doctor",
+    "typecheck": "tsc",
+    "test": "bun test"
   },
   "keywords": [],
-  "author": "",
+  "author": "Rahul Raj",
   "license": "ISC",
   "packageManager": "pnpm@10.18.3",
   "dependencies": {
     "commander": "^15.0.0",
     "express": "^5.2.1",
-    "openai": "^7.23.0"
+    "openai": "^7.23.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.2",
     "@types/express": "^5.0.6",
-    "@types/node": "^26.6.3"
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.1"
   }
 }
