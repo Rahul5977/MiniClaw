@@ -1,7 +1,8 @@
 import { APIConnectionError } from "openai";
 import { createInterface } from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
-import { defaultSystemPrompt, Session } from "../agent/session.ts";
+import { buildSystemPrompt } from "../agent/prompt.ts";
+import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
 import type { LLMProvider } from "../llm/provider.ts";
 
@@ -16,7 +17,7 @@ const HELP = `Commands:
 While the agent is replying, press Ctrl+C to stop it.`;
 
 export async function startCliChat(config: Config, llm: LLMProvider): Promise<void> {
-  const session = new Session(defaultSystemPrompt(config.agent.name), config.agent.historyLimit);
+  const session = new Session(buildSystemPrompt(config.agent.name, []), config.agent.historyLimit);
   const rl = createInterface({ input, output, prompt: cyan("you › ") });
 
   // Ctrl+C stops the current reply if one is streaming, otherwise quits.
@@ -54,12 +55,12 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       continue;
     }
 
-    session.add({ role: "user", content: line });
     current = new AbortController();
     let reply = "";
     output.write(cyan(`${config.agent.name.toLowerCase()} › `));
     try {
-      for await (const event of llm.stream(session.messages(), { signal: current.signal })) {
+      const messages = [...session.messages(), { role: "user" as const, content: line }];
+      for await (const event of llm.stream(messages, { signal: current.signal })) {
         if (event.type !== "text") continue;
         reply += event.delta;
         output.write(event.delta);
@@ -77,8 +78,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       current = null;
     }
 
-    if (reply) session.add({ role: "assistant", content: reply });
-    else session.popUser();
+    if (reply) session.addTurn([{ role: "user", content: line }, { role: "assistant", content: reply }]);
     rl.prompt();
   }
 

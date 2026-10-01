@@ -12,8 +12,14 @@ const ConfigSchema = z.object({
   }).prefault({}),
   agent: z.object({
     name: z.string().default("MiniClaw"),
-    // Max user+assistant messages kept in context during a chat session.
-    historyLimit: z.number().int().positive().default(20),
+    // Soft cap on messages (including tool calls/results) kept in context.
+    historyLimit: z.number().int().positive().default(40),
+    // Max LLM calls per user message, so a confused model can't loop forever.
+    maxSteps: z.number().int().min(1).max(30).default(8),
+  }).prefault({}),
+  paths: z.object({
+    workspace: z.string().default("workspace"),
+    data: z.string().default("data"),
   }).prefault({}),
 });
 

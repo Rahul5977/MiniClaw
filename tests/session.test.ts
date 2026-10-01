@@ -3,28 +3,26 @@ import { Session } from "../src/agent/session.ts";
 
 test("messages start with the system prompt", () => {
   const session = new Session("sys", 10);
-  session.add({ role: "user", content: "hi" });
+  session.addTurn([{ role: "user", content: "hi" }]);
   expect(session.messages()).toEqual([
     { role: "system", content: "sys" },
     { role: "user", content: "hi" },
   ]);
 });
 
-test("history is trimmed and never starts with an assistant turn", () => {
+test("old turns are dropped whole, newest turn is always kept", () => {
   const session = new Session("sys", 3);
-  for (let i = 0; i < 3; i++) {
-    session.add({ role: "user", content: `q${i}` });
-    session.add({ role: "assistant", content: `a${i}` });
-  }
-  const [, first] = session.messages();
-  expect(session.length).toBeLessThanOrEqual(3);
-  expect(first?.role).toBe("user");
-  expect(first?.content).toBe("q2");
+  session.addTurn([{ role: "user", content: "q0" }, { role: "assistant", content: "a0" }]);
+  session.addTurn([
+    { role: "user", content: "q1" },
+    { role: "assistant", content: "", toolCalls: [{ id: "c", name: "t", arguments: "{}" }] },
+    { role: "tool", toolCallId: "c", content: "r" },
+    { role: "assistant", content: "a1" },
+  ]);
+  expect(session.length).toBe(4);
+  expect(session.messages()[1]).toEqual({ role: "user", content: "q1" });
 });
 
-test("popUser removes a dangling user message", () => {
-  const session = new Session("sys", 10);
-  session.add({ role: "user", content: "hi" });
-  session.popUser();
-  expect(session.length).toBe(0);
+test("a turn must start with a user message", () => {
+  expect(() => new Session("sys", 3).addTurn([{ role: "assistant", content: "x" }])).toThrow();
 });

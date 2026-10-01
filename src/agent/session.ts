@@ -1,32 +1,29 @@
 import type { ChatMessage } from "../llm/provider.ts";
 
-type Turn = Extract<ChatMessage, { role: "user" | "assistant" }>;
+export type TurnMessage = Exclude<ChatMessage, { role: "system" }>;
 
-/** In-memory conversation. Persisted to SQLite in Phase 3. */
+/**
+ * In-memory conversation (persisted to SQLite in Phase 3). Stored as whole
+ * turns — a user message plus the assistant replies and tool results it led to —
+ * so trimming never separates a tool call from its result.
+ */
 export class Session {
-  private turns: Turn[] = [];
+  private turns: TurnMessage[][] = [];
 
   constructor(
     private systemPrompt: string,
+    /** Soft cap on messages kept; the latest turn is always kept in full. */
     private historyLimit: number,
   ) {}
 
-  /** Messages to send to the LLM: system prompt + the most recent turns. */
   messages(): ChatMessage[] {
-    return [{ role: "system", content: this.systemPrompt }, ...this.turns];
+    return [{ role: "system", content: this.systemPrompt }, ...this.turns.flat()];
   }
 
-  add(turn: Turn): void {
-    this.turns.push(turn);
-    // Drop whole old turns so the window never starts with an orphaned assistant reply.
-    while (this.turns.length > this.historyLimit || this.turns[0]?.role === "assistant") {
-      this.turns.shift();
-    }
-  }
-
-  /** Remove the last user message, e.g. when the reply to it failed. */
-  popUser(): void {
-    if (this.turns.at(-1)?.role === "user") this.turns.pop();
+  addTurn(messages: TurnMessage[]): void {
+    if (messages[0]?.role !== "user") throw new Error("A turn must start with a user message");
+    this.turns.push(messages);
+    while (this.turns.length > 1 && this.length > this.historyLimit) this.turns.shift();
   }
 
   reset(): void {
@@ -34,15 +31,6 @@ export class Session {
   }
 
   get length(): number {
-    return this.turns.length;
+    return this.turns.reduce((n, turn) => n + turn.length, 0);
   }
-}
-
-export function defaultSystemPrompt(agentName: string): string {
-  const today = new Date().toDateString();
-  return [
-    `You are ${agentName}, a helpful personal AI assistant running locally on the user's computer.`,
-    "Be concise and friendly. If you are not sure about something, say so instead of guessing.",
-    `Today is ${today}.`,
-  ].join("\n");
 }
