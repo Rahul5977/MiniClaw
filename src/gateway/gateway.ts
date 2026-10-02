@@ -9,6 +9,8 @@ export interface GatewayOptions {
   defaultChat?: string;
   answerTimeoutMs?: number;
   schedulerIntervalMs?: number;
+  /** HTTP server for webhooks (and later the dashboard). Localhost by default; use a tunnel to expose it. */
+  http?: { host: string; port: number };
 }
 
 /**
@@ -18,6 +20,7 @@ export interface GatewayOptions {
 export class Gateway {
   private conversations = new Map<string, Conversation>();
   private ignored = new Set<string>();
+  private server: ReturnType<typeof Bun.serve> | null = null;
   readonly scheduler: Scheduler;
 
   constructor(
@@ -32,11 +35,36 @@ export class Gateway {
     for (const channel of this.channels) {
       await channel.start((message) => void this.receive(channel, message));
     }
+    this.startHttp();
     this.scheduler.start();
+  }
+
+  /** The URL of the HTTP server, if one is running. */
+  get url(): string | undefined {
+    return this.server ? `http://${this.server.hostname}:${this.server.port}` : undefined;
+  }
+
+  private startHttp(): void {
+    const routes = Object.assign({}, ...this.channels.map((c) => c.routes?.() ?? {})) as Record<
+      string,
+      (request: Request) => Response | Promise<Response>
+    >;
+    if (Object.keys(routes).length === 0) return;
+    const { host = "127.0.0.1", port = 8787 } = this.options.http ?? {};
+    this.server = Bun.serve({
+      hostname: host,
+      port,
+      fetch: (request) => {
+        const route = routes[new URL(request.url).pathname];
+        return route ? route(request) : new Response("Not found", { status: 404 });
+      },
+    });
+    console.log(`[gateway] HTTP server on ${this.url}`);
   }
 
   async stop(): Promise<void> {
     this.scheduler.stop();
+    this.server?.stop(true);
     for (const conversation of this.conversations.values()) conversation.stop();
     await Promise.all(this.channels.map((c) => c.stop().catch(() => {})));
   }

@@ -26,6 +26,8 @@ export interface ChatChannel {
   isAllowed(senderId: string): boolean;
   /** The owner's chat, for reminders and briefings created outside this channel. */
   defaultChatId(): string | undefined;
+  /** HTTP routes this channel needs on the gateway's server (e.g. a webhook), by path. */
+  routes?(): Record<string, (request: Request) => Response | Promise<Response>>;
 }
 
 /** Splits long text at line breaks so it fits a chat app's message limit. */

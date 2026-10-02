@@ -134,3 +134,14 @@ test("helpers: splitting long messages and matching typed answers", () => {
   expect(matchChoice("a", choices)).toBe("always");
   expect(matchChoice("maybe", choices)).toBeUndefined();
 });
+
+test("channel routes are served on the gateway's HTTP server", async () => {
+  const { runtime } = await testRuntime(new ScriptedLLM([]));
+  const channel = new FakeChannel("hooky", ["1"]);
+  (channel as any).routes = () => ({ "/webhooks/test": () => new Response("hooked") });
+  const gateway = new Gateway(runtime, [channel], { http: { host: "127.0.0.1", port: 0 } });
+  await gateway.start();
+  expect(await (await fetch(`${gateway.url}/webhooks/test`)).text()).toBe("hooked");
+  expect((await fetch(`${gateway.url}/other`)).status).toBe(404);
+  await gateway.stop();
+});
