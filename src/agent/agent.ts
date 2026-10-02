@@ -3,6 +3,8 @@ import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts
 import type { AuditLog } from "../security/audit.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { DailyNotes } from "../memory/notes.ts";
+import { maxLevel } from "../security/risk.ts";
+import { permits, type Permission } from "../skills/permissions.ts";
 import type { Checkpoints } from "../workspace/checkpoints.ts";
 import { truncate } from "../tools/format.ts";
 import type { Session, TurnMessage } from "./session.ts";
@@ -56,6 +58,7 @@ export class Agent {
     // Where untrusted content entered this turn; tools like remember record it (I-5, I-3).
     const untrusted = new Set<string>();
     const actions: string[] = [];
+    const activeSkills = new Map<string, Permission[]>();
     // Messages up to this index form a valid conversation (no tool call without its result).
     let consistent = 1;
     let finished = false;
@@ -83,7 +86,7 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted };
+          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills };
           const { output, done } = yield* this.execute(call, ctx);
           for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
           if (done) actions.push(done);
@@ -129,6 +132,7 @@ export class Agent {
       // e.g. SandboxError: path outside the workspace.
       risk = { level: "blocked", reasons: [(error as Error).message], scope: `${tool.name}:?`, sessionApprovable: false };
     }
+    risk = enforceSkillPermissions(tool.name, risk, ctx.activeSkills);
     yield { type: "tool_start", callId: call.id, tool: tool.name, summary, risk };
 
     const preview = risk.level === "medium" || risk.level === "high" ? await tool.preview?.(args, ctx) : undefined;
@@ -172,4 +176,20 @@ export class Agent {
     // `done` is the one-line summary of a successful action, for the daily notes.
     return { output, done: ok ? summary : undefined };
   }
+}
+
+/**
+ * I-6: while skills are active, a call none of them declared is escalated to high
+ * risk (always asks, with the reason). Permissions never lower a call's risk.
+ */
+export function enforceSkillPermissions(tool: string, risk: Risk, active?: ReadonlyMap<string, Permission[]>): Risk {
+  if (!active?.size) return risk;
+  for (const permissions of active.values()) if (permits(permissions, tool, risk.scope)) return risk;
+  const names = [...active.keys()].map((n) => `"${n}"`).join(", ");
+  return {
+    ...risk,
+    level: maxLevel(risk.level, "high"),
+    reasons: [...risk.reasons, `is outside what the active skill ${names} declared it needs`],
+    sessionApprovable: false,
+  };
 }

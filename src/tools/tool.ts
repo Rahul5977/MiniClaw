@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ToolSchema } from "../llm/provider.ts";
+import type { Permission } from "../skills/permissions.ts";
 
 /** blocked = never run; high = always ask; medium = ask (or session-approve); low = auto-run. */
 export type RiskLevel = "low" | "medium" | "high" | "blocked";
@@ -21,6 +22,8 @@ export interface ToolContext {
   sessionId?: string;
   /** Sources of untrusted content (e.g. "web:https://…") seen so far in this turn. */
   untrustedSources?: ReadonlySet<string>;
+  /** Skills loaded in this turn and their declared permissions (I-6). */
+  activeSkills?: Map<string, Permission[]>;
 }
 
 export interface Tool<A = any> {

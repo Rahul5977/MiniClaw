@@ -55,6 +55,16 @@ const MIGRATIONS: string[] = [
     decided_at         INTEGER
   );
   `,
+  `
+  -- I-6: which version of each skill the user approved, and with which permissions.
+  CREATE TABLE skill_grants (
+    name         TEXT NOT NULL,
+    hash         TEXT NOT NULL,             -- hash of SKILL.md; a changed file needs new consent
+    permissions  TEXT NOT NULL,             -- JSON array, as approved
+    granted_at   INTEGER NOT NULL,
+    PRIMARY KEY (name, hash)
+  );
+  `,
 ];
 
 export function openDatabase(path: string): Database {

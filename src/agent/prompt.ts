@@ -8,12 +8,14 @@ export interface PromptParts {
   /** Confirmed, unexpired facts from MEMORY.md. */
   facts: Fact[];
   tools: Tool[];
+  /** Installed skills; only names and descriptions go in the prompt (instructions load on demand). */
+  skills?: { name: string; description: string }[];
   /** Max tokens for the memory section; the newest facts win. */
   memoryTokens?: number;
   now?: Date;
 }
 
-export function buildSystemPrompt({ identity, facts, tools, memoryTokens = 800, now = new Date() }: PromptParts): string {
+export function buildSystemPrompt({ identity, facts, tools, skills = [], memoryTokens = 800, now = new Date() }: PromptParts): string {
   const lines = [identity, `Today is ${now.toDateString()}.`];
 
   if (facts.length > 0) {
@@ -49,6 +51,14 @@ export function buildSystemPrompt({ identity, facts, tools, memoryTokens = 800, 
       lines.push(
         "When the user tells you a lasting fact or preference about themselves, call remember. " +
           "Never remember passwords, PINs or other secrets. Memories are saved only after the user confirms them.",
+      );
+    }
+    if (skills.length > 0 && tools.some((t) => t.name === "load_skill")) {
+      lines.push(
+        "",
+        "## Skills",
+        "Before doing a task that matches one of these skills, call load_skill with its name and follow its instructions:",
+        ...skills.map((s) => `- ${s.name}: ${s.description}`),
       );
     }
     lines.push(
