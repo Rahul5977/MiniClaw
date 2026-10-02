@@ -1,31 +1,14 @@
-import { join } from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface, type Interface } from "node:readline";
 import { APIConnectionError } from "openai";
-import { Agent, type AgentEvent } from "../agent/agent.ts";
+import type { AgentEvent } from "../agent/agent.ts";
 import { createPlan, planScopes, planTask } from "../agent/planner.ts";
-import { buildSystemPrompt } from "../agent/prompt.ts";
-import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
-import { openDatabase } from "../db/database.ts";
-import { SessionStore } from "../db/sessions.ts";
 import type { LLMProvider } from "../llm/provider.ts";
-import { addDays, FactStore, today } from "../memory/facts.ts";
-import { loadIdentity } from "../memory/identity.ts";
-import { MemoryInbox } from "../memory/inbox.ts";
-import { DailyNotes } from "../memory/notes.ts";
+import { addDays, today } from "../memory/facts.ts";
+import { createRuntime } from "../runtime.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
-import { AuditLog } from "../security/audit.ts";
-import { prepareWorkspace } from "../security/sandbox.ts";
-import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
-import { SkillGrants } from "../skills/grants.ts";
-import { loadSkills } from "../skills/loader.ts";
-import { createRecallNotesTool, createRememberTool } from "../tools/memory.ts";
-import { runShellTool } from "../tools/shell.ts";
-import { createSkillTool } from "../tools/skills.ts";
-import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
-import { webFetchTool } from "../tools/web.ts";
-import { Checkpoints } from "../workspace/checkpoints.ts";
+import type { RiskLevel } from "../tools/tool.ts";
 import { formatSkills } from "./skillsView.ts";
 
 const color = (code: number) => (s: string) => `\x1b[${code}m${s}\x1b[0m`;
@@ -54,53 +37,10 @@ const HELP = `Commands:
 While the agent is working, press Ctrl+C to stop it.`;
 
 export async function startCliChat(config: Config, llm: LLMProvider): Promise<void> {
-  const db = openDatabase(join(config.paths.data, "miniclaw.db"));
-  const workspace = prepareWorkspace(config.paths.workspace);
-  const checkpoints = new Checkpoints(join(config.paths.data, "checkpoints.git"), workspace);
-  await checkpoints.init();
-
-  const memoryDir = join(config.paths.data, "memory");
-  const facts = new FactStore(join(memoryDir, "MEMORY.md"));
-  facts.removeExpired();
-  const inbox = new MemoryInbox(db, facts);
-  const identityPath = join(memoryDir, "IDENTITY.md");
-  const notes = new DailyNotes(join(memoryDir, "notes"));
-  const { skills, problems: skillProblems } = loadSkills(config.paths.skills);
-  const grants = new SkillGrants(db);
-
-  const tools = new ToolRegistry([
-    readFileTool,
-    listDirTool,
-    writeFileTool,
-    runShellTool,
-    webFetchTool,
-    createRememberTool(inbox),
-    createRecallNotesTool(notes),
-  ]);
-  // Each skill becomes a tool named after it. A skill whose name clashes with a tool is skipped.
-  for (const skill of [...skills]) {
-    try {
-      tools.register(createSkillTool(skill, grants));
-    } catch {
-      skills.splice(skills.indexOf(skill), 1);
-      skillProblems.push({ dir: skill.dir, error: `name "${skill.name}" clashes with a built-in tool` });
-    }
-  }
-  const sessions = new SessionStore(db);
-  const openSession = (id: string) =>
-    new Session({
-      id,
-      store: sessions,
-      systemPrompt: () =>
-        buildSystemPrompt({
-          identity: loadIdentity(identityPath, config.agent.name),
-          facts: facts.all(),
-          tools: tools.list(),
-          skills,
-        }),
-    });
+  const runtime = await createRuntime(config, llm);
+  const { checkpoints, facts, inbox, notes, skills, skillProblems, grants, tools, sessions, workspace } = runtime;
   // Pick up the last conversation, like a chat app does.
-  let session = openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
+  let session = runtime.openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
   const policy = new ApprovalPolicy();
   const rl = createInterface({ input, output, prompt: cyan("you › ") });
 
@@ -112,19 +52,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   });
 
   const approver = new CliApprover(rl, () => current?.signal);
-  const agent = new Agent({
-    llm,
-    tools,
-    policy,
-    approver,
-    audit: new AuditLog(db),
-    checkpoints,
-    notes,
-    workspace,
-    maxSteps: config.agent.maxSteps,
-    contextTokens: config.agent.contextTokens,
-    replyTokens: config.agent.replyTokens,
-  });
+  const agent = runtime.createAgent({ policy, approver });
 
   console.log(cyan(`🦀 ${config.agent.name}`) + dim(` · model ${llm.model} · ${config.llm.baseURL}`));
   console.log(dim(`Workspace: ${workspace}`));
@@ -159,7 +87,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   async function runCommand(command: string, arg?: string): Promise<void> {
     switch (command) {
       case "new":
-        session = openSession(sessions.create("cli"));
+        session = runtime.openSession(sessions.create("cli"));
         policy.reset();
         console.log(dim("Started a new conversation.\n"));
         return;
