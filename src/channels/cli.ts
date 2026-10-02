@@ -10,10 +10,14 @@ import type { Config } from "../config.ts";
 import { openDatabase } from "../db/database.ts";
 import { SessionStore } from "../db/sessions.ts";
 import type { LLMProvider } from "../llm/provider.ts";
+import { FactStore } from "../memory/facts.ts";
+import { loadIdentity } from "../memory/identity.ts";
+import { MemoryInbox } from "../memory/inbox.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
 import { AuditLog } from "../security/audit.ts";
 import { prepareWorkspace } from "../security/sandbox.ts";
 import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
+import { createRememberTool } from "../tools/memory.ts";
 import { runShellTool } from "../tools/shell.ts";
 import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
 import { webFetchTool } from "../tools/web.ts";
@@ -45,13 +49,27 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   const checkpoints = new Checkpoints(join(config.paths.data, "checkpoints.git"), workspace);
   await checkpoints.init();
 
-  const tools = new ToolRegistry([readFileTool, listDirTool, writeFileTool, runShellTool, webFetchTool]);
+  const memoryDir = join(config.paths.data, "memory");
+  const facts = new FactStore(join(memoryDir, "MEMORY.md"));
+  facts.removeExpired();
+  const inbox = new MemoryInbox(db, facts);
+  const identityPath = join(memoryDir, "IDENTITY.md");
+
+  const tools = new ToolRegistry([
+    readFileTool,
+    listDirTool,
+    writeFileTool,
+    runShellTool,
+    webFetchTool,
+    createRememberTool(inbox),
+  ]);
   const sessions = new SessionStore(db);
   const openSession = (id: string) =>
     new Session({
       id,
       store: sessions,
-      systemPrompt: () => buildSystemPrompt(config.agent.name, tools.list()),
+      systemPrompt: () =>
+        buildSystemPrompt({ identity: loadIdentity(identityPath, config.agent.name), facts: facts.all(), tools: tools.list() }),
     });
   // Pick up the last conversation, like a chat app does.
   let session = openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
