@@ -184,3 +184,31 @@ test("a normal final answer is not mistaken for an announcement", async () => {
   await t.run("read x");
   expect(t.llm.seen).toHaveLength(2);
 });
+
+test("a claimed action without a tool call is flagged and retried once", async () => {
+  const t = await setup([{ text: "Added to today's journal." }, { calls: [write("j.md", "entry")] }, { text: "Done." }], ["approve"]);
+  const events = await t.run("journal: entry");
+  expect(events.find((e) => e.type === "notice")).toMatchObject({ message: expect.stringContaining("no tool was called") });
+  expect(t.llm.seen[1]?.at(-1)?.content).toContain("you did not call any tool");
+  expect(readFileSync(join(t.workspace, "j.md"), "utf8")).toBe("entry");
+});
+
+test("a repeated false claim ends with a warning to the user", async () => {
+  const t = await setup([{ text: "I've saved it." }, { text: "Saved it for you." }]);
+  const events = await t.run("save it");
+  const notices = events.filter((e) => e.type === "notice");
+  expect(notices).toHaveLength(2);
+  expect(notices[1]).toMatchObject({ message: "No tool was called, so nothing was actually saved or changed." });
+});
+
+test("ordinary sentences are not mistaken for claims", async () => {
+  const t = await setup([{ text: "Created in 2020, the repo has 10 stars. Updated daily by its authors." }]);
+  const events = await t.run("tell me about the repo");
+  expect(events.some((e) => e.type === "notice")).toBe(false);
+});
+
+test("claims backed by a real change are not flagged", async () => {
+  const t = await setup([{ calls: [write("a.md", "x")] }, { text: "I've saved a.md." }], ["approve"]);
+  const events = await t.run("save");
+  expect(events.some((e) => e.type === "notice")).toBe(false);
+});

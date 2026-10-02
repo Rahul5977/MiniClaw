@@ -341,6 +341,10 @@ class Renderer {
         }
         return;
       }
+      case "notice":
+        this.breakLine();
+        console.log(yellow(`  ⚠ ${event.message}`));
+        return;
       case "step_limit":
         this.breakLine();
         console.log(yellow(`  ! reached the limit of ${event.maxSteps} steps`));

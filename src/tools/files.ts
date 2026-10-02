@@ -42,7 +42,8 @@ export const readFileTool = defineTool({
   summarize: (args) => `read ${args.path}`,
   async run(args, ctx) {
     const path = resolveInWorkspace(ctx.workspace, args.path);
-    const content = await readFile(path, "utf8");
+    const content = await readIfExists(path);
+    if (content === undefined) return `${displayPath(ctx.workspace, path)} does not exist.`;
     if (content.includes("\0")) return `${args.path} looks like a binary file and can't be shown as text.`;
     return untrusted(`file:${displayPath(ctx.workspace, path)}`, truncate(content, MAX_READ_CHARS));
   },

@@ -23,7 +23,9 @@ export type AgentEvent =
       /** Files changed by this call, e.g. ["M\tnotes.md"] (empty if none). */
       changes: string[];
     }
-  | { type: "step_limit"; maxSteps: number };
+  | { type: "step_limit"; maxSteps: number }
+  /** Something the user should know about the model's behavior, e.g. an unbacked claim. */
+  | { type: "notice"; message: string };
 
 export interface AgentDeps {
   llm: LLMProvider;
@@ -46,6 +48,14 @@ const STOPPED = "(stopped by the user)";
 const NUDGE = (tools: string[]) =>
   "(Note from MiniClaw, not the user: your last reply did not answer the user or call a tool. " +
   `Call the tool you need now — the exact names are: ${tools.join(", ")} — or give your final answer.)`;
+
+const CLAIM_NUDGE =
+  "(Note from MiniClaw, not the user: you said you did something, but you did not call any tool, so nothing happened. " +
+  "Call the tool now to actually do it, or tell the user it was not done.)";
+
+/** Claims a completed change: "Added to today's journal.", "I've saved the file". */
+const CLAIMS_ACTION =
+  /(^|[.!?\n]\s*)(added|saved|written|appended|stored|recorded) (it |this |that |the entry |them )?(to|in|into)\b|\bI('ve| have)? (just )?(added|saved|written|wrote|created|updated|deleted|removed|appended|stored|recorded)\b|\bhas been (added|saved|written|created|updated|deleted|appended|recorded)\b/i;
 
 /** Ends by promising an action: "Let's do that now.", "I'll fetch the forecast." */
 const ANNOUNCES_ACTION =
@@ -74,12 +84,18 @@ export class Agent {
     try {
       let nudged = false;
       let announced = false;
+      let challenged = false;
+      // Did anything that changes state (files, memory) actually succeed in this turn?
+      let changedSomething = false;
       for (let step = 0; step < maxSteps; step++) {
         let text = "";
         let calls: ToolCall[] = [];
         const context = session.context(turn, budget);
         // One-off hint after an empty reply; never saved to the conversation.
-        if (nudged) context.push({ role: "user", content: NUDGE(tools.list().map((t) => t.name)) });
+        if (nudged) {
+          const hint = challenged && !announced ? CLAIM_NUDGE : NUDGE(tools.list().map((t) => t.name));
+          context.push({ role: "user", content: hint });
+        }
         for await (const event of llm.stream(context, { tools: schemas, signal })) {
           if (event.type === "text") {
             text += event.delta;
@@ -104,6 +120,17 @@ export class Agent {
           yield { type: "text", delta: "\n" };
           continue;
         }
+        // Verified actions: a reply claiming "Added/Saved/Created…" when no state-changing
+        // tool succeeded in this turn is false. Say so, and ask once for the real call.
+        if (calls.length === 0 && !changedSomething && CLAIMS_ACTION.test(text)) {
+          if (!challenged) {
+            challenged = true;
+            nudged = true;
+            yield { type: "notice", message: "The model said it did something, but no tool was called, so nothing happened yet. Asking it to actually do it…" };
+            continue;
+          }
+          yield { type: "notice", message: "No tool was called, so nothing was actually saved or changed." };
+        }
         nudged = false;
 
         if (calls.length === 0) {
@@ -121,7 +148,8 @@ export class Agent {
         for (const call of calls) {
           signal.throwIfAborted();
           const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills };
-          const { output, done } = yield* this.execute(call, ctx);
+          const { output, done, changed } = yield* this.execute(call, ctx);
+          if (changed) changedSomething = true;
           for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
           if (done) actions.push(done);
           // One tool result may use at most ~30% of the window, whatever the tool's own cap.
@@ -145,7 +173,7 @@ export class Agent {
     }
   }
 
-  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, { output: string; done?: string }> {
+  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, { output: string; done?: string; changed?: boolean }> {
     const { tools, policy, approver, audit, checkpoints } = this.deps;
     const { signal, sessionId } = ctx;
 
@@ -208,7 +236,7 @@ export class Agent {
     });
     yield { type: "tool_end", callId: call.id, tool: tool.name, verdict, ok, output, changes };
     // `done` is the one-line summary of a successful action, for the daily notes.
-    return { output, done: ok ? summary : undefined };
+    return { output, done: ok ? summary : undefined, changed: ok && (tool.changesWorkspace || tool.name === "remember") };
   }
 }
 
