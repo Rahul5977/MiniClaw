@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { loadConfig, type Config } from "./config.ts";
+import { buildChannels } from "./gateway/channels.ts";
 
 type Status = "ok" | "warn" | "fail";
 interface Check {
@@ -35,8 +36,27 @@ export async function runDoctor(overrides: { model?: string } = {}): Promise<boo
   }
 
   checks.push(...(await checkLlm(config.llm, config.agent.contextTokens)));
+  checks.push(...checkChatApps(config));
   print();
   return checks.every((c) => c.status !== "fail");
+}
+
+/** Chat apps are optional: problems are warnings, since the CLI works without them. */
+function checkChatApps(config: Config): Check[] {
+  const { channels, errors } = buildChannels(config);
+  const checks: Check[] = errors.map((error) => ({ status: "warn" as const, label: error }));
+  for (const channel of channels) checks.push({ status: "ok", label: `Chat app configured: ${channel.name}` });
+  if (channels.length === 0 && errors.length === 0) {
+    checks.push({ status: "ok", label: "No chat apps configured (optional; see the README to add Telegram or WhatsApp)" });
+  }
+  if (config.channels.whatsappWeb.enabled) {
+    checks.push({
+      status: "warn",
+      label: "WhatsApp Web (unofficial) is enabled",
+      hint: "It breaks WhatsApp's terms of service and the number can be banned. Use a spare number.",
+    });
+  }
+  return checks;
 }
 
 /** /undo (I-1) stores workspace checkpoints with git. */
