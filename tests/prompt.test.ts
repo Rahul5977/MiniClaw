@@ -44,3 +44,8 @@ test("skills are listed by name and description only", () => {
   expect(prompt).toContain("- weather: Get the weather.");
   expect(buildSystemPrompt({ identity: "X", facts: [], tools: [readFileTool], skills })).not.toContain("## Skills");
 });
+
+test("the date is given in words and ISO form, with the time", () => {
+  const prompt = buildSystemPrompt({ identity: "X", facts: [], tools: [], now: new Date("2026-10-02T13:05:00") });
+  expect(prompt).toContain("Today is Fri Oct 02 2026 (2026-10-02), 13:05 local time.");
+});

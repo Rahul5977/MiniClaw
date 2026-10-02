@@ -1,4 +1,4 @@
-import type { Fact } from "../memory/facts.ts";
+import { today, type Fact } from "../memory/facts.ts";
 import type { Tool } from "../tools/tool.ts";
 import { estimateTokens } from "./tokens.ts";
 
@@ -16,7 +16,8 @@ export interface PromptParts {
 }
 
 export function buildSystemPrompt({ identity, facts, tools, skills = [], memoryTokens = 800, now = new Date() }: PromptParts): string {
-  const lines = [identity, `Today is ${now.toDateString()}.`];
+  const time = now.toTimeString().slice(0, 5);
+  const lines = [identity, `Today is ${now.toDateString()} (${today(now)}), ${time} local time.`];
 
   if (facts.length > 0) {
     const shown: string[] = [];
