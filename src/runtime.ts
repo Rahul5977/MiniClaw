@@ -13,11 +13,13 @@ import { MemoryInbox } from "./memory/inbox.ts";
 import { DailyNotes } from "./memory/notes.ts";
 import type { ApprovalPolicy, Approver } from "./security/approvals.ts";
 import { AuditLog } from "./security/audit.ts";
+import { ReminderStore } from "./scheduler/reminders.ts";
 import { prepareWorkspace } from "./security/sandbox.ts";
 import { SkillGrants } from "./skills/grants.ts";
 import { loadSkills, type Skill, type SkillProblem } from "./skills/loader.ts";
 import { listDirTool, readFileTool, writeFileTool } from "./tools/files.ts";
 import { createRecallNotesTool, createRememberTool } from "./tools/memory.ts";
+import { createReminderTools } from "./tools/reminders.ts";
 import { runShellTool } from "./tools/shell.ts";
 import { createSkillTool } from "./tools/skills.ts";
 import { ToolRegistry } from "./tools/tool.ts";
@@ -43,6 +45,7 @@ export interface Runtime {
   tools: ToolRegistry;
   sessions: SessionStore;
   audit: AuditLog;
+  reminders: ReminderStore;
   openSession(id: string): Session;
   /** Approval state is per conversation, so each chat gets its own policy and approver. */
   createAgent(options: { policy: ApprovalPolicy; approver: Approver }): Agent;
@@ -62,6 +65,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
   const notes = new DailyNotes(join(memoryDir, "notes"));
   const { skills, problems: skillProblems } = loadSkills(config.paths.skills);
   const grants = new SkillGrants(db);
+  const reminders = new ReminderStore(db);
 
   const tools = new ToolRegistry([
     readFileTool,
@@ -71,6 +75,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
     webFetchTool,
     createRememberTool(inbox),
     createRecallNotesTool(notes),
+    ...Object.values(createReminderTools(reminders)),
   ]);
   // Each skill becomes a tool named after it. A skill whose name clashes with a tool is skipped.
   for (const skill of [...skills]) {
@@ -107,6 +112,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
     tools,
     sessions,
     audit,
+    reminders,
     openSession: (id) => new Session({ id, store: sessions, systemPrompt }),
     createAgent: ({ policy, approver }) =>
       new Agent({
