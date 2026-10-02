@@ -27,6 +27,38 @@ export const ConfigSchema = z.object({
     skills: z.string().default("skills"),
     data: z.string().default("data"),
   }).prefault({}),
+  gateway: z.object({
+    // Localhost only by default; expose webhooks with a tunnel (ngrok) instead of opening the port.
+    host: z.string().default("127.0.0.1"),
+    port: z.number().int().min(0).max(65535).default(8787),
+    // "<channel>:<chatId>" for reminders made in the CLI; defaults to the first allowed user.
+    defaultChat: z.string().optional(),
+    // Unanswered approval questions count as "no" after this long.
+    answerTimeoutMinutes: z.number().min(1).default(10),
+  }).prefault({}),
+  channels: z.object({
+    telegram: z.object({
+      enabled: z.boolean().optional(),
+      token: z.string().optional(),
+      allowedUsers: z.array(z.coerce.string()).default([]),
+      // Change only for a self-hosted Bot API server (or tests).
+      apiBase: z.url().default("https://api.telegram.org"),
+    }).prefault({}),
+    whatsapp: z.object({
+      enabled: z.boolean().optional(),
+      token: z.string().optional(),
+      phoneNumberId: z.string().optional(),
+      appSecret: z.string().optional(),
+      verifyToken: z.string().optional(),
+      allowedNumbers: z.array(z.coerce.string()).default([]),
+      apiBase: z.url().default("https://graph.facebook.com/v21.0"),
+    }).prefault({}),
+    // Unofficial (Baileys). Never enabled automatically because the number can be banned.
+    whatsappWeb: z.object({
+      enabled: z.boolean().default(false),
+      allowedNumbers: z.array(z.coerce.string()).default([]),
+    }).prefault({}),
+  }).prefault({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -42,8 +74,32 @@ export function loadConfig(overrides: { model?: string } = {}): Config {
   const file = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
 
   const env = process.env;
+  const list = (value?: string) => value?.split(",").map((s) => s.trim()).filter(Boolean);
+  const channels = file.channels ?? {};
   const raw = {
     ...file,
+    // Secrets only come from the environment (.env), never from the config file.
+    channels: {
+      ...channels,
+      telegram: {
+        ...channels.telegram,
+        token: env.TELEGRAM_BOT_TOKEN,
+        ...(list(env.TELEGRAM_ALLOWED_USERS) && { allowedUsers: list(env.TELEGRAM_ALLOWED_USERS) }),
+      },
+      whatsapp: {
+        ...channels.whatsapp,
+        token: env.WHATSAPP_TOKEN,
+        phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? channels.whatsapp?.phoneNumberId,
+        appSecret: env.WHATSAPP_APP_SECRET,
+        verifyToken: env.WHATSAPP_VERIFY_TOKEN,
+        ...(list(env.WHATSAPP_ALLOWED_NUMBERS) && { allowedNumbers: list(env.WHATSAPP_ALLOWED_NUMBERS) }),
+      },
+      whatsappWeb: {
+        ...channels.whatsappWeb,
+        ...(env.WHATSAPP_WEB_ENABLED && { enabled: env.WHATSAPP_WEB_ENABLED === "true" }),
+        ...(list(env.WHATSAPP_WEB_ALLOWED_NUMBERS) && { allowedNumbers: list(env.WHATSAPP_WEB_ALLOWED_NUMBERS) }),
+      },
+    },
     llm: {
       ...file.llm,
       ...(env.LLM_BASE_URL && { baseURL: env.LLM_BASE_URL }),
