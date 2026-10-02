@@ -52,7 +52,6 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       id,
       store: sessions,
       systemPrompt: () => buildSystemPrompt(config.agent.name, tools.list()),
-      historyLimit: config.agent.historyLimit,
     });
   // Pick up the last conversation, like a chat app does.
   let session = openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
@@ -76,6 +75,8 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     checkpoints,
     workspace,
     maxSteps: config.agent.maxSteps,
+    contextTokens: config.agent.contextTokens,
+    replyTokens: config.agent.replyTokens,
   });
 
   console.log(cyan(`🦀 ${config.agent.name}`) + dim(` · model ${llm.model} · ${config.llm.baseURL}`));

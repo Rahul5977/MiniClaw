@@ -3,7 +3,9 @@ import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts
 import type { AuditLog } from "../security/audit.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { Checkpoints } from "../workspace/checkpoints.ts";
+import { truncate } from "../tools/format.ts";
 import type { Session, TurnMessage } from "./session.ts";
+import { toolSchemaTokens } from "./tokens.ts";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -29,6 +31,9 @@ export interface AgentDeps {
   checkpoints: Checkpoints;
   workspace: string;
   maxSteps: number;
+  /** The model's context window and the part of it kept free for the reply. */
+  contextTokens: number;
+  replyTokens: number;
 }
 
 const STOPPED = "(stopped by the user)";
@@ -41,7 +46,9 @@ export class Agent {
   constructor(private deps: AgentDeps) {}
 
   async *run(session: Session, userText: string, signal: AbortSignal): AsyncGenerator<AgentEvent> {
-    const { llm, tools, maxSteps } = this.deps;
+    const { llm, tools, maxSteps, contextTokens, replyTokens } = this.deps;
+    const schemas = tools.schemas();
+    const budget = contextTokens - replyTokens - toolSchemaTokens(schemas);
     const turn: TurnMessage[] = [{ role: "user", content: userText }];
     // Messages up to this index form a valid conversation (no tool call without its result).
     let consistent = 1;
@@ -51,7 +58,7 @@ export class Agent {
       for (let step = 0; step < maxSteps; step++) {
         let text = "";
         let calls: ToolCall[] = [];
-        for await (const event of llm.stream([...session.messages(), ...turn], { tools: tools.schemas(), signal })) {
+        for await (const event of llm.stream(session.context(turn, budget), { tools: schemas, signal })) {
           if (event.type === "text") {
             text += event.delta;
             yield event;
@@ -71,7 +78,8 @@ export class Agent {
         for (const call of calls) {
           signal.throwIfAborted();
           const output = yield* this.execute(call, session.id, signal);
-          turn.push({ role: "tool", toolCallId: call.id, content: output });
+          // One tool result may use at most ~30% of the window, whatever the tool's own cap.
+          turn.push({ role: "tool", toolCallId: call.id, content: truncate(output, Math.floor(contextTokens * 0.3 * 3.5)) });
         }
         consistent = turn.length;
       }

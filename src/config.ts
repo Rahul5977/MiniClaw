@@ -12,8 +12,11 @@ const ConfigSchema = z.object({
   }).prefault({}),
   agent: z.object({
     name: z.string().default("MiniClaw"),
-    // Soft cap on messages (including tool calls/results) kept in context.
-    historyLimit: z.number().int().positive().default(40),
+    // Must match the model's real context window. Ollama's default is often 4096,
+    // set OLLAMA_CONTEXT_LENGTH to raise it. `miniclaw doctor` checks this.
+    contextTokens: z.number().int().min(2048).default(4096),
+    // Space kept free for the model's reply.
+    replyTokens: z.number().int().min(256).default(768),
     // Max LLM calls per user message, so a confused model can't loop forever.
     maxSteps: z.number().int().min(1).max(30).default(8),
   }).prefault({}),

@@ -60,8 +60,10 @@ async function setup(steps: Step[], answers: Decision[] = [], maxSteps = 5) {
     checkpoints,
     workspace,
     maxSteps,
+    contextTokens: 8192,
+    replyTokens: 512,
   });
-  const session = new Session({ id: "test", systemPrompt: () => "sys", historyLimit: 100 });
+  const session = new Session({ id: "test", systemPrompt: () => "sys" });
   const run = async (text: string, signal = new AbortController().signal) => {
     const events: AgentEvent[] = [];
     for await (const e of agent.run(session, text, signal)) events.push(e);
@@ -83,7 +85,7 @@ test("tool call → approval → result fed back → final answer", async () => 
   expect(t.approver.asked).toBe(1);
   expect(events.find((e) => e.type === "tool_end")).toMatchObject({ verdict: "approved", ok: true, changes: ["A\ta.md"] });
   expect(t.llm.seen[1]?.at(-1)).toMatchObject({ role: "tool", content: expect.stringContaining("Wrote 5 characters") });
-  expect(t.session.messages().at(-1)).toEqual({ role: "assistant", content: "Saved a.md" });
+  expect(t.session.context([], 100_000).at(-1)).toEqual({ role: "assistant", content: "Saved a.md" });
 
   // I-1: the change is checkpointed and can be undone.
   expect((await t.checkpoints.history())[0]?.summary).toBe("write a.md");
@@ -127,7 +129,7 @@ test("step limit stops runaway loops and keeps the session valid", async () => {
   const t = await setup([loop, loop, loop, loop], [], 2);
   const events = await t.run("loop");
   expect(events.at(-1)).toEqual({ type: "step_limit", maxSteps: 2 });
-  const last = t.session.messages().at(-1);
+  const last = t.session.context([], 100_000).at(-1);
   expect(last?.role).toBe("assistant");
   expect(last?.content).toContain("stopped after 2 steps");
 });
@@ -141,7 +143,7 @@ test("Ctrl+C during approval cancels the tool and keeps the session valid", asyn
   };
   await expect(t.run("write a.md", controller.signal)).rejects.toThrow();
   expect(existsSync(join(t.workspace, "a.md"))).toBe(false);
-  expect(t.session.messages().slice(1)).toEqual([
+  expect(t.session.context([], 100_000).slice(1)).toEqual([
     { role: "user", content: "write a.md" },
     { role: "assistant", content: "(stopped by the user)" },
   ]);

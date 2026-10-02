@@ -34,7 +34,7 @@ export async function runDoctor(overrides: { model?: string } = {}): Promise<boo
     return false;
   }
 
-  checks.push(...(await checkLlm(config.llm)));
+  checks.push(...(await checkLlm(config.llm, config.agent.contextTokens)));
   print();
   return checks.every((c) => c.status !== "fail");
 }
@@ -54,7 +54,7 @@ function checkGit(): Check {
   };
 }
 
-async function checkLlm(llm: Config["llm"]): Promise<Check[]> {
+async function checkLlm(llm: Config["llm"], contextTokens: number): Promise<Check[]> {
   const client = new OpenAI({ baseURL: llm.baseURL, apiKey: llm.apiKey, maxRetries: 0, timeout: 5000 });
 
   let models: string[];
@@ -96,8 +96,36 @@ async function checkLlm(llm: Config["llm"]): Promise<Check[]> {
     } else if (capabilities) {
       checks.push({ status: "ok", label: "Model supports tool calling" });
     }
+    const window = await ollamaContextWindow(llm.baseURL, llm.model);
+    if (window !== null && window < contextTokens) {
+      checks.push({
+        status: "warn",
+        label: `Ollama runs "${llm.model}" with a ${window}-token window, but agent.contextTokens is ${contextTokens}`,
+        hint: `Ollama would silently cut off the start of long prompts. Either set agent.contextTokens to ${window}, or restart Ollama with OLLAMA_CONTEXT_LENGTH=${contextTokens}.`,
+      });
+    } else if (window !== null) {
+      checks.push({ status: "ok", label: `Context window: ${window} tokens (MiniClaw uses ${contextTokens})` });
+    }
   }
   return checks;
+}
+
+/** The window Ollama actually allocated for the model (loads the model if needed). */
+async function ollamaContextWindow(baseURL: string, model: string): Promise<number | null> {
+  try {
+    const root = ollamaRoot(baseURL);
+    // An empty prompt just loads the model into memory.
+    await fetch(`${root}/api/generate`, {
+      method: "POST",
+      body: JSON.stringify({ model, prompt: "" }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const res = await fetch(`${root}/api/ps`, { signal: AbortSignal.timeout(5000) });
+    const body = (await res.json()) as { models?: { name: string; context_length?: number }[] };
+    return body.models?.find((m) => m.name === model)?.context_length ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Ollama's native API lives at the server root, next to the OpenAI-compatible /v1. */
