@@ -43,6 +43,14 @@ export interface AgentDeps {
 
 const STOPPED = "(stopped by the user)";
 
+const NUDGE = (tools: string[]) =>
+  "(Note from MiniClaw, not the user: your last reply did not answer the user or call a tool. " +
+  `Call the tool you need now — the exact names are: ${tools.join(", ")} — or give your final answer.)`;
+
+/** Ends by promising an action: "Let's do that now.", "I'll fetch the forecast." */
+const ANNOUNCES_ACTION =
+  /(let'?s (do|proceed with|get started on|go ahead with) (that|it|this)( now)?|I('ll| will) (now )?(fetch|get|check|call|run|look up|retrieve|search|read|download|write|create|do)\b[^.!?\n]*)[.!…]*\s*$/i;
+
 /**
  * The agent loop (ReAct style): ask the model → run any tools it asks for →
  * feed results back → repeat until it answers in plain text or hits maxSteps.
@@ -64,10 +72,15 @@ export class Agent {
     let finished = false;
 
     try {
+      let nudged = false;
+      let announced = false;
       for (let step = 0; step < maxSteps; step++) {
         let text = "";
         let calls: ToolCall[] = [];
-        for await (const event of llm.stream(session.context(turn, budget), { tools: schemas, signal })) {
+        const context = session.context(turn, budget);
+        // One-off hint after an empty reply; never saved to the conversation.
+        if (nudged) context.push({ role: "user", content: NUDGE(tools.list().map((t) => t.name)) });
+        for await (const event of llm.stream(context, { tools: schemas, signal })) {
           if (event.type === "text") {
             text += event.delta;
             yield event;
@@ -76,7 +89,28 @@ export class Agent {
           }
         }
 
+        // Ollama silently drops calls to tools that don't exist, which looks like an
+        // empty reply. Retry once with a hint instead of showing the user nothing.
+        if (calls.length === 0 && !text.trim() && !nudged) {
+          nudged = true;
+          step--;
+          continue;
+        }
+        // Small models often announce an action ("Let's do that now.") and then stop.
+        // After a tool has run in this turn, give them one nudge to actually do it.
+        if (calls.length === 0 && !announced && turn.length > 1 && ANNOUNCES_ACTION.test(text)) {
+          announced = true;
+          nudged = true;
+          yield { type: "text", delta: "\n" };
+          continue;
+        }
+        nudged = false;
+
         if (calls.length === 0) {
+          if (!text.trim()) {
+            text = "Sorry, I couldn't produce an answer to that. Could you rephrase it?";
+            yield { type: "text", delta: text };
+          }
           turn.push({ role: "assistant", content: text });
           consistent = turn.length;
           finished = true;

@@ -148,3 +148,39 @@ test("Ctrl+C during approval cancels the tool and keeps the session valid", asyn
     { role: "assistant", content: "(stopped by the user)" },
   ]);
 });
+
+test("an empty reply is retried once with a hint that is not saved", async () => {
+  const t = await setup([{ text: "" }, { text: "Here you go" }]);
+  const events = await t.run("hi");
+  expect(events).toEqual([{ type: "text", delta: "Here you go" }]);
+  expect(t.llm.seen[1]?.at(-1)?.content).toContain("did not answer the user or call a tool");
+  expect(t.session.context([], 100_000).slice(1)).toEqual([
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "Here you go" },
+  ]);
+});
+
+test("two empty replies in a row give the user a fallback message", async () => {
+  const t = await setup([{ text: "" }, { text: "" }]);
+  const events = await t.run("hi");
+  expect(events).toEqual([{ type: "text", delta: expect.stringContaining("couldn't produce an answer") }]);
+});
+
+test("an announced-but-not-taken action after a tool call gets one nudge", async () => {
+  const t = await setup([
+    { calls: [{ name: "read_file", arguments: '{"path":"missing.txt"}' }] },
+    { text: "The file is missing. I'll check the folder instead. Let's do that now." },
+    { text: "There is no such file." },
+  ]);
+  const events = await t.run("read missing.txt");
+  expect(t.llm.seen).toHaveLength(3);
+  expect(t.llm.seen[2]?.at(-1)?.content).toContain("Call the tool you need now");
+  expect(t.session.context([], 100_000).at(-1)).toEqual({ role: "assistant", content: "There is no such file." });
+  expect(events.filter((e) => e.type === "text").length).toBeGreaterThan(1);
+});
+
+test("a normal final answer is not mistaken for an announcement", async () => {
+  const t = await setup([{ calls: [{ name: "read_file", arguments: '{"path":"x"}' }] }, { text: "I read it and it is empty." }]);
+  await t.run("read x");
+  expect(t.llm.seen).toHaveLength(2);
+});
