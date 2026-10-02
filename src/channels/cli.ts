@@ -18,11 +18,15 @@ import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } fr
 import { AuditLog } from "../security/audit.ts";
 import { prepareWorkspace } from "../security/sandbox.ts";
 import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
+import { SkillGrants } from "../skills/grants.ts";
+import { loadSkills } from "../skills/loader.ts";
 import { createRecallNotesTool, createRememberTool } from "../tools/memory.ts";
 import { runShellTool } from "../tools/shell.ts";
+import { createLoadSkillTool } from "../tools/skills.ts";
 import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
 import { webFetchTool } from "../tools/web.ts";
 import { Checkpoints } from "../workspace/checkpoints.ts";
+import { formatSkills } from "./skillsView.ts";
 
 const color = (code: number) => (s: string) => `\x1b[${code}m${s}\x1b[0m`;
 const dim = color(2);
@@ -42,6 +46,7 @@ const HELP = `Commands:
   /notes [date]    show the daily log (today, yesterday or YYYY-MM-DD)
   /undo [n]        undo the last n file changes made by the agent (default 1)
   /history         list recent agent changes that can be undone
+  /skills          list installed skills and their permissions
   /tools           list the tools the agent can use
   /new             start a new conversation (also forgets "always allow" approvals)
   /help            show this help
@@ -60,6 +65,8 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   const inbox = new MemoryInbox(db, facts);
   const identityPath = join(memoryDir, "IDENTITY.md");
   const notes = new DailyNotes(join(memoryDir, "notes"));
+  const { skills, problems: skillProblems } = loadSkills(config.paths.skills);
+  const grants = new SkillGrants(db);
 
   const tools = new ToolRegistry([
     readFileTool,
@@ -69,6 +76,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     webFetchTool,
     createRememberTool(inbox),
     createRecallNotesTool(notes),
+    ...(skills.length ? [createLoadSkillTool(skills, grants)] : []),
   ]);
   const sessions = new SessionStore(db);
   const openSession = (id: string) =>
@@ -76,7 +84,12 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       id,
       store: sessions,
       systemPrompt: () =>
-        buildSystemPrompt({ identity: loadIdentity(identityPath, config.agent.name), facts: facts.all(), tools: tools.list() }),
+        buildSystemPrompt({
+          identity: loadIdentity(identityPath, config.agent.name),
+          facts: facts.all(),
+          tools: tools.list(),
+          skills,
+        }),
     });
   // Pick up the last conversation, like a chat app does.
   let session = openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
@@ -107,6 +120,8 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
 
   console.log(cyan(`🦀 ${config.agent.name}`) + dim(` · model ${llm.model} · ${config.llm.baseURL}`));
   console.log(dim(`Workspace: ${workspace}`));
+  if (skills.length) console.log(dim(`Skills: ${skills.map((s) => s.name).join(", ")}`));
+  for (const p of skillProblems) console.log(yellow(`! skill ${p.dir} skipped: ${p.error}`));
   if (session.turnCount > 0) {
     const n = session.turnCount;
     console.log(dim(`Continuing your last conversation (${n} earlier ${n === 1 ? "message" : "messages"}). /new starts fresh.`));
@@ -189,6 +204,9 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
         console.log(notes.read(date) ?? dim(`No notes for ${date}.`));
         return;
       }
+      case "skills":
+        console.log(formatSkills(skills, skillProblems, grants, config.paths.skills) + "\n");
+        return;
       case "tools":
         for (const tool of tools.list()) console.log(`${bold(tool.name)} ${dim("— " + tool.description)}`);
         console.log();

@@ -22,6 +22,7 @@ const ConfigSchema = z.object({
   }).prefault({}),
   paths: z.object({
     workspace: z.string().default("workspace"),
+    skills: z.string().default("skills"),
     data: z.string().default("data"),
   }).prefault({}),
 });
