@@ -1,5 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Database } from "bun:sqlite";
 import type { RiskLevel } from "../tools/tool.ts";
 import type { Verdict } from "./approvals.ts";
 
@@ -45,20 +44,57 @@ export function redact(text: string): string {
   return out;
 }
 
-/** Append-only JSON Lines log of every tool call. Moves to SQLite in Phase 3. */
+/** Append-only log of every tool call, stored in SQLite (audit_log table). */
 export class AuditLog {
   private counter = 0;
 
-  constructor(private path: string) {
-    mkdirSync(dirname(path), { recursive: true });
-  }
+  constructor(private db: Database) {}
 
   nextId(): string {
     return `${Date.now().toString(36)}-${(this.counter++).toString(36)}`;
   }
 
   record(entry: Omit<AuditEntry, "time">): void {
-    const line = redact(JSON.stringify({ time: new Date().toISOString(), ...entry, result: entry.result.slice(0, 500) }));
-    appendFileSync(this.path, line + "\n");
+    this.db
+      .query(
+        `INSERT INTO audit_log (id, session_id, tool, summary, args, risk, reasons, verdict, ok, duration_ms, result, created_at)
+         VALUES ($id, $session, $tool, $summary, $args, $risk, $reasons, $verdict, $ok, $duration, $result, $time)`,
+      )
+      .run({
+        id: entry.id,
+        session: entry.session,
+        tool: entry.tool,
+        summary: redact(entry.summary),
+        args: redact(JSON.stringify(entry.args)),
+        risk: entry.risk,
+        reasons: JSON.stringify(entry.reasons),
+        verdict: entry.verdict,
+        ok: entry.ok ? 1 : 0,
+        duration: entry.durationMs,
+        result: redact(entry.result.slice(0, 500)),
+        time: Date.now(),
+      });
+  }
+
+  /** Newest first. */
+  recent(limit = 50): AuditEntry[] {
+    type Row = Record<string, string | number | null>;
+    return this.db
+      .query<Row, [number]>("SELECT * FROM audit_log ORDER BY created_at DESC, rowid DESC LIMIT ?")
+      .all(limit)
+      .map((r) => ({
+        id: String(r.id),
+        time: new Date(Number(r.created_at)).toISOString(),
+        session: String(r.session_id),
+        tool: String(r.tool),
+        summary: String(r.summary),
+        args: JSON.parse(String(r.args)),
+        risk: r.risk as RiskLevel,
+        reasons: JSON.parse(String(r.reasons)),
+        verdict: r.verdict as Verdict,
+        ok: r.ok === 1,
+        durationMs: Number(r.duration_ms),
+        result: String(r.result),
+      }));
   }
 }

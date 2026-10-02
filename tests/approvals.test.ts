@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ApprovalPolicy, type Approver, type Decision } from "../src/security/approvals.ts";
-import { redact } from "../src/security/audit.ts";
+import { openDatabase } from "../src/db/database.ts";
+import { AuditLog, redact } from "../src/security/audit.ts";
 import { makeRisk } from "../src/security/risk.ts";
 
 function scripted(...answers: Decision[]): Approver & { asked: number } {
@@ -59,4 +60,14 @@ test("redact hides keys and secret env values", () => {
   const out = redact("key sk-abcdefghijklmnopqrstuv and supersecretvalue123 and Bearer abcdefghijklmnopqrstu");
   delete process.env.MY_API_TOKEN;
   expect(out).toBe("key [REDACTED] and [REDACTED] and Bearer [REDACTED]");
+});
+
+test("audit log stores redacted entries, newest first", () => {
+  const audit = new AuditLog(openDatabase(":memory:"));
+  const base = { session: "s", summary: "x", risk: "low" as const, reasons: ["r"], verdict: "auto" as const, ok: true, durationMs: 1 };
+  audit.record({ ...base, id: audit.nextId(), tool: "first", args: {}, result: "ok" });
+  audit.record({ ...base, id: audit.nextId(), tool: "second", args: { key: "sk-abcdefghijklmnopqrstuv" }, result: "ok" });
+  const [latest, earlier] = audit.recent();
+  expect(latest).toMatchObject({ tool: "second", args: { key: "[REDACTED]" }, reasons: ["r"], ok: true });
+  expect(earlier?.tool).toBe("first");
 });

@@ -7,6 +7,7 @@ import { Session } from "../src/agent/session.ts";
 import type { ChatMessage, ChatOptions, LLMProvider, StreamEvent, ToolCall } from "../src/llm/provider.ts";
 import { collect } from "../src/llm/provider.ts";
 import { ApprovalPolicy, type Approver, type Decision } from "../src/security/approvals.ts";
+import { openDatabase } from "../src/db/database.ts";
 import { AuditLog } from "../src/security/audit.ts";
 import { prepareWorkspace } from "../src/security/sandbox.ts";
 import { readFileTool, writeFileTool } from "../src/tools/files.ts";
@@ -49,12 +50,13 @@ async function setup(steps: Step[], answers: Decision[] = [], maxSteps = 5) {
     },
   };
   const llm = new ScriptedLLM(steps);
+  const audit = new AuditLog(openDatabase(":memory:"));
   const agent = new Agent({
     llm,
     tools: new ToolRegistry([readFileTool, writeFileTool, runShellTool]),
     policy: new ApprovalPolicy(),
     approver,
-    audit: new AuditLog(join(dir, "data/audit.jsonl")),
+    audit,
     checkpoints,
     workspace,
     sessionId: "test",
@@ -66,7 +68,7 @@ async function setup(steps: Step[], answers: Decision[] = [], maxSteps = 5) {
     for await (const e of agent.run(session, text, signal)) events.push(e);
     return events;
   };
-  return { dir, workspace, checkpoints, approver, llm, session, run };
+  return { dir, workspace, checkpoints, approver, llm, session, audit, run };
 }
 
 const write = (path: string, content: string) => ({
@@ -89,9 +91,9 @@ test("tool call → approval → result fed back → final answer", async () => 
   await t.checkpoints.undo();
   expect(existsSync(join(t.workspace, "a.md"))).toBe(false);
 
-  const audit = readFileSync(join(t.dir, "data/audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const audit = t.audit.recent();
   expect(audit).toHaveLength(1);
-  expect(audit[0]).toMatchObject({ tool: "write_file", verdict: "approved", risk: "medium", ok: true });
+  expect(audit[0]).toMatchObject({ tool: "write_file", verdict: "approved", risk: "medium", ok: true, args: { path: "a.md" } });
 });
 
 test("denied actions are not run and the model is told why", async () => {

@@ -9,6 +9,7 @@ import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
 import type { LLMProvider } from "../llm/provider.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
+import { openDatabase } from "../db/database.ts";
 import { AuditLog } from "../security/audit.ts";
 import { prepareWorkspace } from "../security/sandbox.ts";
 import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
@@ -38,6 +39,7 @@ const HELP = `Commands:
 While the agent is working, press Ctrl+C to stop it.`;
 
 export async function startCliChat(config: Config, llm: LLMProvider): Promise<void> {
+  const db = openDatabase(join(config.paths.data, "miniclaw.db"));
   const workspace = prepareWorkspace(config.paths.workspace);
   const checkpoints = new Checkpoints(join(config.paths.data, "checkpoints.git"), workspace);
   await checkpoints.init();
@@ -60,7 +62,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     tools,
     policy,
     approver,
-    audit: new AuditLog(join(config.paths.data, "audit.jsonl")),
+    audit: new AuditLog(db),
     checkpoints,
     workspace,
     sessionId: "cli:default",
