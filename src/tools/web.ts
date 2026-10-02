@@ -31,6 +31,36 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * Picks a value by dot path: "owner.login", "items.0.name", or "*.commit.message"
+ * where "*" means every item of an array (or every value of an object).
+ */
+export function pickPath(data: unknown, path: string): unknown {
+  const parts = path.split(".").filter(Boolean);
+  const walk = (value: unknown, i: number): unknown => {
+    if (i === parts.length) return value;
+    const key = parts[i]!;
+    if (key === "*") {
+      const items = Array.isArray(value) ? value : value && typeof value === "object" ? Object.values(value) : [];
+      return items.map((item) => walk(item, i + 1));
+    }
+    if (value && typeof value === "object" && key in value) return walk((value as Record<string, unknown>)[key], i + 1);
+    return undefined;
+  };
+  return walk(data, 0);
+}
+
+/** One line per requested field, so a 30 KB API response becomes a few hundred characters. */
+export function selectFields(json: string, fields: string[]): string {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return "(fields were requested, but the response is not valid JSON)\n" + json;
+  }
+  return fields.map((field) => `${field}: ${JSON.stringify(pickPath(data, field)) ?? "(not found)"}`).join("\n");
+}
+
 async function readCapped(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -48,9 +78,16 @@ async function readCapped(response: Response): Promise<string> {
 
 export const webFetchTool = defineTool({
   name: "web_fetch",
-  description: "Download a web page (http/https) and return its readable text.",
+  description:
+    "Download a web page (http/https) and return its readable text. " +
+    "For JSON APIs, pass `fields` to get only what you need (responses can be very large).",
   schema: z.object({
     url: z.string().describe("Full URL starting with http:// or https://"),
+    fields: z
+      .array(z.string())
+      .max(20)
+      .optional()
+      .describe("JSON only: dot paths to return, e.g. ['stargazers_count', 'owner.login', '*.commit.message'] ('*' = every item)"),
   }),
   changesWorkspace: false,
   targetHint: "full URL",
@@ -84,7 +121,8 @@ export const webFetchTool = defineTool({
     }
     const raw = await readCapped(response);
     const title = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim();
-    const text = type.includes("html") || /^\s*<(!doctype|html)/i.test(raw) ? htmlToText(raw) : raw;
+    const isHtml = type.includes("html") || /^\s*<(!doctype|html)/i.test(raw);
+    const text = args.fields?.length && !isHtml ? selectFields(raw, args.fields) : isHtml ? htmlToText(raw) : raw;
     const header = `Status: ${response.status}${title ? `\nTitle: ${htmlToText(title)}` : ""}`;
     return untrusted(`web:${url}`, `${header}\n\n${truncate(text, MAX_TEXT_CHARS)}`);
   },
