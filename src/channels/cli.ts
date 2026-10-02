@@ -7,6 +7,7 @@ import type { Config } from "../config.ts";
 import type { LLMProvider } from "../llm/provider.ts";
 import { addDays, today } from "../memory/facts.ts";
 import { createRuntime } from "../runtime.ts";
+import { formatDue } from "../scheduler/reminders.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
 import type { RiskLevel } from "../tools/tool.ts";
 import { formatSkills } from "./skillsView.ts";
@@ -29,6 +30,10 @@ const HELP = `Commands:
   /notes [date]    show the daily log (today, yesterday or YYYY-MM-DD)
   /undo [n]        undo the last n file changes made by the agent (default 1)
   /history         list recent agent changes that can be undone
+  /reminders       list upcoming reminders (/reminders cancel <n> to cancel one)
+  /status          pause state and today's action budgets
+  /panic           emergency stop: block all risky actions until /resume
+  /resume          lift /panic
   /skills          list installed skills and their permissions
   /tools           list the tools the agent can use
   /new             start a new conversation (also forgets "always allow" approvals)
@@ -62,6 +67,8 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     const n = session.turnCount;
     console.log(dim(`Continuing your last conversation (${n} earlier ${n === 1 ? "message" : "messages"}). /new starts fresh.`));
   }
+  const paused = runtime.guard.pausedInfo();
+  if (paused) console.log(red(`⛔ MiniClaw is ${paused}. Risky actions are blocked until /resume.`));
   console.log(dim("Type /help for commands.\n"));
 
   // Iterating (instead of rl.question) buffers lines, so pasted or piped input isn't lost.
@@ -138,6 +145,33 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       case "notes": {
         const date = !arg || arg === "today" ? today() : arg === "yesterday" ? addDays(today(), -1) : arg;
         console.log(notes.read(date) ?? dim(`No notes for ${date}.`));
+        return;
+      }
+      case "panic":
+        runtime.guard.pause("the terminal");
+        console.log(red("⛔ Paused. Risky actions are blocked (reading still works) until /resume.\n"));
+        return;
+      case "resume":
+        runtime.guard.resume();
+        console.log(green("▶ Resumed.\n"));
+        return;
+      case "status": {
+        const info = runtime.guard.pausedInfo();
+        console.log(info ? red(`⛔ ${info}`) : green("▶ running"));
+        for (const u of runtime.guard.usage()) console.log(dim(`  ${u.tool}: ${u.used}/${u.limit} today`));
+        console.log(dim(`  ${runtime.reminders.pending().length} upcoming reminders, ${inbox.pending().length} memories to review\n`));
+        return;
+      }
+      case "reminders": {
+        const [sub, id] = (arg ?? "").split(/\s+/);
+        if (sub === "cancel") {
+          const cancelled = runtime.reminders.cancel(Number(id));
+          return void console.log(cancelled ? green(`Cancelled #${cancelled.id}: ${cancelled.text}\n`) : red(`No upcoming reminder #${id}\n`));
+        }
+        const pending = runtime.reminders.pending();
+        if (pending.length === 0) console.log(dim("No upcoming reminders."));
+        for (const r of pending) console.log(`${dim(`#${r.id}`)} ${formatDue(r.dueAt)}${r.repeat ? dim(` (${r.repeat})`) : ""} ${r.text}`);
+        console.log(dim("Reminders are delivered while `miniclaw gateway` is running.\n"));
         return;
       }
       case "skills":
@@ -255,6 +289,7 @@ class Renderer {
       case "tool_start":
         this.breakLine();
         console.log(`  ${RISK_COLOR[event.risk.level]("⚙")} ${event.summary} ${dim(`[${event.risk.level}]`)}`);
+        if (event.risk.level === "blocked") for (const r of event.risk.reasons) console.log(red(`    • ${r}`));
         return;
       case "tool_end": {
         const first = event.output.split("\n")[0]?.slice(0, 100) ?? "";

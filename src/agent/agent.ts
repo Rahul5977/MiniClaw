@@ -1,6 +1,7 @@
 import type { LLMProvider, ToolCall } from "../llm/provider.ts";
 import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts";
 import type { AuditLog } from "../security/audit.ts";
+import type { Guard } from "../security/guard.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { DailyNotes } from "../memory/notes.ts";
 import { maxLevel } from "../security/risk.ts";
@@ -36,6 +37,8 @@ export interface AgentDeps {
   checkpoints: Checkpoints;
   workspace: string;
   maxSteps: number;
+  /** I-9: panic lock and daily budgets, checked before any approval. */
+  guard?: Guard;
   /** Optional daily log: one line per turn with the request and the actions taken. */
   notes?: DailyNotes;
   /** The model's context window and the part of it kept free for the reply. */
@@ -195,6 +198,7 @@ export class Agent {
       risk = { level: "blocked", reasons: [(error as Error).message], scope: `${tool.name}:?`, sessionApprovable: false };
     }
     risk = enforceSkillPermissions(tool.name, risk, ctx.activeSkills);
+    if (this.deps.guard) risk = this.deps.guard.check(tool.name, risk);
     yield { type: "tool_start", callId: call.id, tool: tool.name, summary, risk };
 
     const preview = risk.level === "medium" || risk.level === "high" ? await tool.preview?.(args, ctx) : undefined;

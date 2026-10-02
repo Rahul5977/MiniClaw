@@ -13,6 +13,7 @@ import { MemoryInbox } from "./memory/inbox.ts";
 import { DailyNotes } from "./memory/notes.ts";
 import type { ApprovalPolicy, Approver } from "./security/approvals.ts";
 import { AuditLog } from "./security/audit.ts";
+import { Guard } from "./security/guard.ts";
 import { ReminderStore } from "./scheduler/reminders.ts";
 import { prepareWorkspace } from "./security/sandbox.ts";
 import { SkillGrants } from "./skills/grants.ts";
@@ -46,6 +47,7 @@ export interface Runtime {
   sessions: SessionStore;
   audit: AuditLog;
   reminders: ReminderStore;
+  guard: Guard;
   openSession(id: string): Session;
   /** Approval state is per conversation, so each chat gets its own policy and approver. */
   createAgent(options: { policy: ApprovalPolicy; approver: Approver }): Agent;
@@ -66,6 +68,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
   const { skills, problems: skillProblems } = loadSkills(config.paths.skills);
   const grants = new SkillGrants(db);
   const reminders = new ReminderStore(db);
+  const guard = new Guard(db, join(config.paths.data, "PAUSED"), config.agent.budgets);
 
   const tools = new ToolRegistry([
     readFileTool,
@@ -113,6 +116,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
     sessions,
     audit,
     reminders,
+    guard,
     openSession: (id) => new Session({ id, store: sessions, systemPrompt }),
     createAgent: ({ policy, approver }) =>
       new Agent({
@@ -123,6 +127,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
         audit,
         checkpoints,
         notes,
+        guard,
         workspace,
         maxSteps: config.agent.maxSteps,
         contextTokens: config.agent.contextTokens,

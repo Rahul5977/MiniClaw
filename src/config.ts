@@ -17,6 +17,8 @@ const ConfigSchema = z.object({
     contextTokens: z.number().int().min(2048).default(4096),
     // Space kept free for the model's reply.
     replyTokens: z.number().int().min(256).default(768),
+    // I-9: max successful calls per tool per day; the panic button is separate.
+    budgets: z.record(z.string(), z.number().int().min(0)).default({ run_shell: 30, web_fetch: 60, write_file: 60 }),
     // Max LLM calls per user message, so a confused model can't loop forever.
     maxSteps: z.number().int().min(1).max(30).default(8),
   }).prefault({}),
