@@ -36,13 +36,10 @@ test("no memory or tool sections when there is nothing to say", () => {
   expect(buildSystemPrompt({ identity: "You are X.", facts: [], tools: [readFileTool] })).toContain("<untrusted>");
 });
 
-test("skills are listed by name and description only", () => {
-  const skills = [{ name: "weather", description: "Get the weather." }];
-  const loadSkill = { ...readFileTool, name: "load_skill" };
-  const prompt = buildSystemPrompt({ identity: "X", facts: [], tools: [loadSkill], skills });
-  expect(prompt).toContain("## Skills");
-  expect(prompt).toContain("- weather: Get the weather.");
-  expect(buildSystemPrompt({ identity: "X", facts: [], tools: [readFileTool], skills })).not.toContain("## Skills");
+test("skills get a short explanation; their instructions are not in the prompt", () => {
+  const prompt = buildSystemPrompt({ identity: "X", facts: [], tools: [readFileTool], skills: [{ name: "weather" }] });
+  expect(prompt).toContain('Tools whose description starts with "Skill:" (weather)');
+  expect(buildSystemPrompt({ identity: "X", facts: [], tools: [readFileTool] })).not.toContain("## Skills");
 });
 
 test("the date is given in words and ISO form, with the time", () => {

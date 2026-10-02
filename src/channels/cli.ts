@@ -22,7 +22,7 @@ import { SkillGrants } from "../skills/grants.ts";
 import { loadSkills } from "../skills/loader.ts";
 import { createRecallNotesTool, createRememberTool } from "../tools/memory.ts";
 import { runShellTool } from "../tools/shell.ts";
-import { createLoadSkillTool } from "../tools/skills.ts";
+import { createSkillTool } from "../tools/skills.ts";
 import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
 import { webFetchTool } from "../tools/web.ts";
 import { Checkpoints } from "../workspace/checkpoints.ts";
@@ -76,8 +76,16 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     webFetchTool,
     createRememberTool(inbox),
     createRecallNotesTool(notes),
-    ...(skills.length ? [createLoadSkillTool(skills, grants)] : []),
   ]);
+  // Each skill becomes a tool named after it. A skill whose name clashes with a tool is skipped.
+  for (const skill of [...skills]) {
+    try {
+      tools.register(createSkillTool(skill, grants));
+    } catch {
+      skills.splice(skills.indexOf(skill), 1);
+      skillProblems.push({ dir: skill.dir, error: `name "${skill.name}" clashes with a built-in tool` });
+    }
+  }
   const sessions = new SessionStore(db);
   const openSession = (id: string) =>
     new Session({

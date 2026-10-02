@@ -65,7 +65,8 @@ function hostMatches(pattern: string, host: string): boolean {
  * Scopes come from the tools' own assess(), e.g. "web_fetch:wttr.in", "run_shell:ls".
  */
 export function permits(permissions: Permission[], tool: string, scope: string): boolean {
-  if (tool === "load_skill") return true;
+  // Calling another skill's tool only returns instructions; it is always allowed.
+  if (scope.startsWith("skill:")) return true;
   const target = scope.slice(scope.indexOf(":") + 1).toLowerCase();
   return permissions.some((p) => {
     switch (tool) {

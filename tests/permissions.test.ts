@@ -33,9 +33,9 @@ test("file, shell and memory permissions", () => {
   expect(permits(perms("net:*"), "remember", "remember")).toBe(false);
 });
 
-test("load_skill is always allowed; unknown tools never are", () => {
-  expect(permits(perms("fs:read"), "load_skill", "load_skill:x")).toBe(true);
-  expect(permits([], "load_skill", "load_skill:x")).toBe(true);
+test("skill tools are always allowed; unknown tools never are", () => {
+  expect(permits(perms("fs:read"), "weather", "skill:weather")).toBe(true);
+  expect(permits([], "github-summary", "skill:github-summary")).toBe(true);
   expect(permits([], "read_file", "read_file:a")).toBe(false);
   expect(permits(perms("net:*", "shell:*", "fs:write", "memory"), "send_email", "send_email:x")).toBe(false);
 });
