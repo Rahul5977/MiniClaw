@@ -155,7 +155,7 @@ report a clear **"novel contribution"** chapter with something to measure.
 - `/forget <topic>` and "what do you know about me?" give full transparency (a privacy-by-design point
   for the report).
 - **Measure:** poisoned-memory attempts blocked; recall accuracy on confirmed facts.
-- **Phase:** 3.
+- **Phase:** 3. **Status:** implemented (`src/memory/`). Proposals made after reading untrusted content show a prompt-injection warning naming the source. "Confidence" was replaced by this provenance, since a model's self-reported confidence can't be trusted.
 
 ### I-6. Skill Permission Manifests — *Should*
 - `SKILL.md` frontmatter declares `permissions: [net:wttr.in, fs:read, shell:none]`.
@@ -364,16 +364,20 @@ sequenceDiagram
 ```
 data/
 ├── memory/
-│   ├── MEMORY.md          # long-term facts, curated ("User is vegetarian", "Lives in Patna")
+│   ├── MEMORY.md          # confirmed long-term facts, one bullet each, hand-editable
 │   ├── IDENTITY.md        # agent persona & rules (editable by user)
 │   └── notes/
-│       └── 2026-10-01.md  # daily log the agent appends to
-└── miniclaw.db            # SQLite
+│       └── 2026-10-02.md  # daily log: one line per turn (request → actions)
+├── checkpoints.git/       # undo history (I-1)
+└── miniclaw.db            # SQLite: sessions, messages, audit_log, memory_inbox
 ```
 
-- **Short-term:** last N messages of the session from SQLite.
-- **Long-term:** `MEMORY.md` injected into every system prompt (keep < ~2k tokens).
-- **Write path:** only via the `remember` tool (append bullet + timestamp) → auditable.
+- **Short-term:** the conversation from SQLite, fitted to the model's token window (newest whole turns first).
+- **Long-term:** confirmed, unexpired facts from `MEMORY.md` go into every system prompt (capped at ~800 tokens, newest first).
+- **Write path (I-5):** the `remember` tool only *proposes* a fact → `memory_inbox` → the user accepts it → `MEMORY.md`.
+  Each proposal records any untrusted sources read earlier in the turn.
+- **Fact format:** `- User is in Goa this week. <!-- added:2026-10-02 expires:2026-10-09 -->`. Lines written by hand work too.
+- **Recall of past activity:** the `recall_notes` tool reads a day's notes ("what did we do yesterday?").
 - **Stretch:** embed notes with `nomic-embed-text` (Ollama) and retrieve top-k (RAG) instead of injecting all.
 
 ### 5.5 Skills Design
@@ -391,53 +395,27 @@ skills/
 
 ### 5.6 Database Schema (SQLite)
 
-```sql
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,            -- e.g. 'cli:default', 'tg:123456'
-  channel TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  model TEXT
-);
+The schema lives in `src/db/database.ts` as versioned migrations (`PRAGMA user_version`).
 
-CREATE TABLE messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT NOT NULL REFERENCES sessions(id),
-  role TEXT NOT NULL CHECK (role IN ('system','user','assistant','tool')),
-  content TEXT,
-  tool_calls TEXT,                -- JSON
-  tool_call_id TEXT,
-  created_at INTEGER NOT NULL
-);
+| Table | Purpose | Key columns |
+|---|---|---|
+| `sessions` | One row per conversation | `id` (`cli:3f9a1c2b`), `channel`, `title`, `updated_at` |
+| `messages` | Every message, grouped into turns | `session_id`, `turn`, `role`, `content`, `tool_calls` (JSON), `tool_call_id` |
+| `audit_log` | Every tool call (I-4) | `tool`, `args` (redacted), `risk`, `reasons`, `verdict`, `ok`, `duration_ms` |
+| `memory_inbox` | Proposed memories (I-5) | `fact`, `expires_at`, `untrusted_sources`, `status` (pending/accepted/rejected) |
 
-CREATE TABLE reminders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT NOT NULL,
-  text TEXT NOT NULL,
-  due_at INTEGER NOT NULL,
-  cron TEXT,                      -- null = one-shot
-  status TEXT NOT NULL DEFAULT 'pending'   -- pending | sent | cancelled
-);
-
-CREATE TABLE audit_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id TEXT,
-  tool TEXT NOT NULL,
-  args TEXT NOT NULL,             -- JSON (secrets redacted)
-  result TEXT,
-  decision TEXT,                  -- auto | approved | denied | timeout
-  duration_ms INTEGER,
-  created_at INTEGER NOT NULL
-);
-```
+Confirmed facts are deliberately **not** in SQLite: they live in `MEMORY.md` so the user can read and edit them.
 
 ### 5.7 ER Diagram
 
 ```mermaid
 erDiagram
     SESSIONS ||--o{ MESSAGES : has
-    SESSIONS ||--o{ REMINDERS : schedules
     SESSIONS ||--o{ AUDIT_LOG : records
+    SESSIONS ||--o{ MEMORY_INBOX : proposes
 ```
+
+`reminders` is added in Phase 5.
 
 ---
 
@@ -582,12 +560,12 @@ export interface Channel {
 - **Milestone M2:** "Read notes.txt and write a summary to summary.md" works end-to-end with approval. ✅
 
 ### Phase 3 — Persistence & Memory (Week 8–9)
-- [ ] SQLite schema + migrations; sessions & message history.
-- [ ] `MEMORY.md`, `IDENTITY.md`, daily notes; `remember` tool.
-- [ ] Prompt builder with token budget (truncate oldest history first).
-- [ ] Slash commands `/new`, `/memory`.
-- [ ] 🚀 **I-5 Memory inbox:** pending → confirmed facts, `expires_at`, `/forget`.
-- **Milestone M3:** Agent recalls a fact told in a previous run after restart.
+- [x] SQLite schema + migrations; sessions & message history.
+- [x] `MEMORY.md`, `IDENTITY.md`, daily notes; `remember` tool.
+- [x] Prompt builder with token budget (truncate oldest history first). Matches Ollama's real window (default 4096); `doctor` warns on mismatch.
+- [x] Slash commands `/new`, `/memory`.
+- [x] 🚀 **I-5 Memory inbox:** pending → confirmed facts, `expires_at`, `/forget`.
+- **Milestone M3:** Agent recalls a fact told in a previous run after restart. ✅
 
 ### Phase 4 — Skills (Week 10)
 - [ ] Skill loader (frontmatter parsing with `gray-matter`), skill index in prompt, `load_skill` tool.

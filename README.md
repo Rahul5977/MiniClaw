@@ -13,8 +13,9 @@ and an undo button.
 |---|---|
 | 1. CLI + LLM (chat, streaming, doctor) | ✅ Done |
 | 2. Agent loop + tools, undo (I-1), plan preview (I-2), risk scoring (I-4) | ✅ Done |
-| 3. Persistence & memory (+ memory inbox, I-5) | ⏳ Next |
-| 4–8 | Planned |
+| 3. Persistence & memory, memory inbox (I-5) | ✅ Done |
+| 4. Skills (+ permission manifests, I-6) | ⏳ Next |
+| 5–8 | Planned |
 
 ## Quick start
 
@@ -54,19 +55,42 @@ miniclaw › I created summary.md with two key points from notes.txt.
 | `write_file` | Create, overwrite or append to a file (shows a diff) | medium |
 | `run_shell` | Run a shell command in the workspace | medium – blocked |
 | `web_fetch` | Download a web page as text | medium – high |
+| `remember` | Propose a fact about you for long-term memory (you confirm it) | low |
+| `recall_notes` | Read the daily log of a given day | low |
 
 ### Chat commands
 
 | Command | Description |
 |---|---|
 | `/plan <task>` | Show the agent's plan with a risk level per step, approve it once, then run it |
+| `/memory` | Show what MiniClaw remembers about you |
+| `/inbox` | Review memories the agent proposed |
+| `/forget <words>` | Delete remembered facts containing these words |
+| `/notes [date]` | Show the daily log (`today`, `yesterday` or `YYYY-MM-DD`) |
 | `/undo [n]` | Undo the last *n* file changes made by the agent |
 | `/history` | List agent changes that can be undone |
 | `/tools` | List available tools |
-| `/new` | New conversation (also forgets "always allow" approvals) |
+| `/new` | New conversation (also forgets "always allow" approvals). Otherwise the last conversation continues after a restart. |
 | `/help`, `/exit` | Help, quit (or Ctrl+D) |
 
 Press **Ctrl+C** while the agent is working (or at an approval prompt) to stop it.
+
+## Memory
+
+```
+you › I'm vegetarian and I'm in Goa this week.
+  ⚙ remember "User is vegetarian." [low]
+  ⚙ remember "User is in Goa this week." [low]
+📥 Remember this? User is vegetarian.        [yes / no / later] y
+   ✔ saved to memory
+```
+
+- **Conversations** are saved in SQLite (`data/miniclaw.db`) and continue after a restart.
+- **Long-term facts** live in `data/memory/MEMORY.md`, a Markdown file you can read and edit. Facts can expire.
+- **Memory inbox (I-5):** the agent can only *propose* memories; nothing is saved until you say yes.
+  If a proposal comes after the agent read a web page or file, you get a ⚠ prompt-injection warning naming the source.
+- **Persona:** edit `data/memory/IDENTITY.md` to change MiniClaw's personality and rules.
+- **Daily notes:** `data/memory/notes/YYYY-MM-DD.md` logs each request and the actions taken.
 
 ## Safety model
 
@@ -81,9 +105,14 @@ Press **Ctrl+C** while the agent is working (or at an approval prompt) to stop i
 - **Plan preview (I-2):** approve a whole multi-step task once. Only its medium-risk steps are pre-approved.
 - **Untrusted content:** file and web content is wrapped in `<untrusted>` tags that can't be escaped, and the model is told never to follow instructions inside them.
 - **No secrets to tools:** shell commands get a minimal environment (no API keys); `web_fetch` re-checks every redirect (no SSRF to `localhost`).
-- **Audit log:** every tool call is recorded in `data/audit.jsonl`, with secrets redacted.
+- **Audit log:** every tool call is recorded in SQLite (`audit_log`), with secrets redacted.
 
 ## Configuration
+
+> **Context window:** Ollama often runs models with a 4096-token window and silently drops anything longer.
+> MiniClaw fits everything into `agent.contextTokens` (default 4096). For longer conversations, start Ollama
+> with `OLLAMA_CONTEXT_LENGTH=8192` and set `contextTokens` to 8192. `bun run doctor` checks that they match.
+
 
 Settings are read in this order (later ones win): defaults → `miniclaw.config.json` → `.env` → CLI flags.
 
@@ -98,7 +127,7 @@ Example `miniclaw.config.json`:
 ```json
 {
   "llm": { "model": "qwen2.5:7b", "temperature": 0.5 },
-  "agent": { "name": "MiniClaw", "historyLimit": 40, "maxSteps": 8 },
+  "agent": { "name": "MiniClaw", "maxSteps": 8, "contextTokens": 4096, "replyTokens": 768 },
   "paths": { "workspace": "workspace", "data": "data" }
 }
 ```
@@ -116,10 +145,13 @@ src/
 ├── config.ts              # config loading + validation (zod)
 ├── doctor.ts              # setup checks
 ├── agent/
-│   ├── agent.ts           # agent loop: LLM ⇄ tools, approvals, checkpoints, audit
+│   ├── agent.ts           # agent loop: LLM ⇄ tools, approvals, checkpoints, audit, notes
 │   ├── planner.ts         # /plan: structured, risk-scored plans (I-2)
-│   ├── prompt.ts          # system prompt
-│   └── session.ts         # conversation history (whole turns)
+│   ├── prompt.ts          # system prompt: identity + memory + tool rules
+│   ├── session.ts         # conversation as whole turns, fitted to the token budget
+│   └── tokens.ts          # token estimates
+├── db/                    # SQLite: migrations, session store
+├── memory/                # MEMORY.md facts, inbox (I-5), IDENTITY.md, daily notes
 ├── channels/cli.ts        # terminal UI, approval prompts, slash commands
 ├── llm/                   # provider interface + OpenAI-compatible client (streaming tool calls)
 ├── security/
@@ -127,6 +159,6 @@ src/
 │   ├── risk.ts            # rule-based risk scoring (I-4)
 │   ├── approvals.ts       # approval policy (auto / session / plan / ask / block)
 │   └── audit.ts           # JSONL audit log with secret redaction
-├── tools/                 # read_file, list_dir, write_file, run_shell, web_fetch
+├── tools/                 # read_file, list_dir, write_file, run_shell, web_fetch, remember, recall_notes
 └── workspace/checkpoints.ts  # git-backed undo (I-1)
 ```
