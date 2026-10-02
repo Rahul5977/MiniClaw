@@ -1,36 +1,50 @@
+import type { SessionStore } from "../db/sessions.ts";
 import type { ChatMessage } from "../llm/provider.ts";
 
 export type TurnMessage = Exclude<ChatMessage, { role: "system" }>;
 
+export interface SessionOptions {
+  id: string;
+  /** Rebuilt for every request, so newly confirmed memories show up immediately. */
+  systemPrompt: () => string;
+  /** Soft cap on messages kept in context; the latest turn is always kept. */
+  historyLimit: number;
+  /** Where turns are saved. Without a store the session lives only in memory (tests). */
+  store?: SessionStore;
+}
+
 /**
- * In-memory conversation (persisted to SQLite in Phase 3). Stored as whole
- * turns — a user message plus the assistant replies and tool results it led to —
- * so trimming never separates a tool call from its result.
+ * A conversation, stored as whole turns — a user message plus the assistant replies
+ * and tool results it led to — so trimming never separates a tool call from its result.
  */
 export class Session {
-  private turns: TurnMessage[][] = [];
+  readonly id: string;
+  private turns: TurnMessage[][];
 
-  constructor(
-    private systemPrompt: string,
-    /** Soft cap on messages kept; the latest turn is always kept in full. */
-    private historyLimit: number,
-  ) {}
+  constructor(private options: SessionOptions) {
+    this.id = options.id;
+    this.turns = options.store?.load(options.id) ?? [];
+  }
 
   messages(): ChatMessage[] {
-    return [{ role: "system", content: this.systemPrompt }, ...this.turns.flat()];
+    const kept: TurnMessage[][] = [];
+    let count = 0;
+    for (let i = this.turns.length - 1; i >= 0; i--) {
+      const turn = this.turns[i]!;
+      if (kept.length > 0 && count + turn.length > this.options.historyLimit) break;
+      kept.unshift(turn);
+      count += turn.length;
+    }
+    return [{ role: "system", content: this.options.systemPrompt() }, ...kept.flat()];
   }
 
   addTurn(messages: TurnMessage[]): void {
     if (messages[0]?.role !== "user") throw new Error("A turn must start with a user message");
     this.turns.push(messages);
-    while (this.turns.length > 1 && this.length > this.historyLimit) this.turns.shift();
+    this.options.store?.appendTurn(this.id, messages);
   }
 
-  reset(): void {
-    this.turns = [];
-  }
-
-  get length(): number {
-    return this.turns.reduce((n, turn) => n + turn.length, 0);
+  get turnCount(): number {
+    return this.turns.length;
   }
 }

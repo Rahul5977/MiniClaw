@@ -7,9 +7,10 @@ import { createPlan, planScopes, planTask } from "../agent/planner.ts";
 import { buildSystemPrompt } from "../agent/prompt.ts";
 import { Session } from "../agent/session.ts";
 import type { Config } from "../config.ts";
+import { openDatabase } from "../db/database.ts";
+import { SessionStore } from "../db/sessions.ts";
 import type { LLMProvider } from "../llm/provider.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
-import { openDatabase } from "../db/database.ts";
 import { AuditLog } from "../security/audit.ts";
 import { prepareWorkspace } from "../security/sandbox.ts";
 import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
@@ -45,7 +46,16 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   await checkpoints.init();
 
   const tools = new ToolRegistry([readFileTool, listDirTool, writeFileTool, runShellTool, webFetchTool]);
-  const session = new Session(buildSystemPrompt(config.agent.name, tools.list()), config.agent.historyLimit);
+  const sessions = new SessionStore(db);
+  const openSession = (id: string) =>
+    new Session({
+      id,
+      store: sessions,
+      systemPrompt: () => buildSystemPrompt(config.agent.name, tools.list()),
+      historyLimit: config.agent.historyLimit,
+    });
+  // Pick up the last conversation, like a chat app does.
+  let session = openSession(sessions.latest("cli")?.id ?? sessions.create("cli"));
   const policy = new ApprovalPolicy();
   const rl = createInterface({ input, output, prompt: cyan("you › ") });
 
@@ -65,12 +75,15 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     audit: new AuditLog(db),
     checkpoints,
     workspace,
-    sessionId: "cli:default",
     maxSteps: config.agent.maxSteps,
   });
 
   console.log(cyan(`🦀 ${config.agent.name}`) + dim(` · model ${llm.model} · ${config.llm.baseURL}`));
   console.log(dim(`Workspace: ${workspace}`));
+  if (session.turnCount > 0) {
+    const n = session.turnCount;
+    console.log(dim(`Continuing your last conversation (${n} earlier ${n === 1 ? "message" : "messages"}). /new starts fresh.`));
+  }
   console.log(dim("Type /help for commands.\n"));
 
   // Iterating (instead of rl.question) buffers lines, so pasted or piped input isn't lost.
@@ -94,7 +107,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   async function runCommand(command: string, arg?: string): Promise<void> {
     switch (command) {
       case "new":
-        session.reset();
+        session = openSession(sessions.create("cli"));
         policy.reset();
         console.log(dim("Started a new conversation.\n"));
         return;

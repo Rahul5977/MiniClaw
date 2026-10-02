@@ -59,10 +59,9 @@ async function setup(steps: Step[], answers: Decision[] = [], maxSteps = 5) {
     audit,
     checkpoints,
     workspace,
-    sessionId: "test",
     maxSteps,
   });
-  const session = new Session("sys", 100);
+  const session = new Session({ id: "test", systemPrompt: () => "sys", historyLimit: 100 });
   const run = async (text: string, signal = new AbortController().signal) => {
     const events: AgentEvent[] = [];
     for await (const e of agent.run(session, text, signal)) events.push(e);

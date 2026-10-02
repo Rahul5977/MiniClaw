@@ -28,7 +28,6 @@ export interface AgentDeps {
   audit: AuditLog;
   checkpoints: Checkpoints;
   workspace: string;
-  sessionId: string;
   maxSteps: number;
 }
 
@@ -71,7 +70,7 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const output = yield* this.execute(call, signal);
+          const output = yield* this.execute(call, session.id, signal);
           turn.push({ role: "tool", toolCallId: call.id, content: output });
         }
         consistent = turn.length;
@@ -90,8 +89,8 @@ export class Agent {
     }
   }
 
-  private async *execute(call: ToolCall, signal: AbortSignal): AsyncGenerator<AgentEvent, string> {
-    const { tools, policy, approver, audit, checkpoints, workspace, sessionId } = this.deps;
+  private async *execute(call: ToolCall, sessionId: string, signal: AbortSignal): AsyncGenerator<AgentEvent, string> {
+    const { tools, policy, approver, audit, checkpoints, workspace } = this.deps;
     const ctx: ToolContext = { workspace, signal };
 
     const parsed = tools.parse(call.name, call.arguments);
