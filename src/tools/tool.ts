@@ -18,6 +18,9 @@ export interface ToolContext {
   /** Absolute path of the sandboxed workspace directory. */
   workspace: string;
   signal?: AbortSignal;
+  sessionId?: string;
+  /** Sources of untrusted content (e.g. "web:https://…") seen so far in this turn. */
+  untrustedSources?: ReadonlySet<string>;
 }
 
 export interface Tool<A = any> {

@@ -50,6 +50,8 @@ export class Agent {
     const schemas = tools.schemas();
     const budget = contextTokens - replyTokens - toolSchemaTokens(schemas);
     const turn: TurnMessage[] = [{ role: "user", content: userText }];
+    // Where untrusted content entered this turn; tools like remember record it (I-5, I-3).
+    const untrusted = new Set<string>();
     // Messages up to this index form a valid conversation (no tool call without its result).
     let consistent = 1;
     let finished = false;
@@ -77,7 +79,8 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const output = yield* this.execute(call, session.id, signal);
+          const output = yield* this.execute(call, { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted });
+          for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
           // One tool result may use at most ~30% of the window, whatever the tool's own cap.
           turn.push({ role: "tool", toolCallId: call.id, content: truncate(output, Math.floor(contextTokens * 0.3 * 3.5)) });
         }
@@ -97,9 +100,9 @@ export class Agent {
     }
   }
 
-  private async *execute(call: ToolCall, sessionId: string, signal: AbortSignal): AsyncGenerator<AgentEvent, string> {
-    const { tools, policy, approver, audit, checkpoints, workspace } = this.deps;
-    const ctx: ToolContext = { workspace, signal };
+  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, string> {
+    const { tools, policy, approver, audit, checkpoints } = this.deps;
+    const { signal, sessionId } = ctx;
 
     const parsed = tools.parse(call.name, call.arguments);
     if (!parsed.ok) {
