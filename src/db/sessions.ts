@@ -20,23 +20,33 @@ export interface SessionInfo {
 export class SessionStore {
   constructor(private db: Database) {}
 
-  create(channel: string): string {
+  /** `chatId` identifies the chat in a chat app (Telegram chat id, WhatsApp number). */
+  create(channel: string, chatId?: string): string {
     const id = `${channel}:${crypto.randomUUID().slice(0, 8)}`;
     const now = Date.now();
     this.db
-      .query("INSERT INTO sessions (id, channel, created_at, updated_at) VALUES (?, ?, ?, ?)")
-      .run(id, channel, now, now);
+      .query("INSERT INTO sessions (id, channel, chat_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, channel, chatId ?? null, now, now);
     return id;
   }
 
-  /** Most recently used session of a channel. */
-  latest(channel: string): SessionInfo | null {
+  /** Most recently used session of a channel (and chat). */
+  latest(channel: string, chatId?: string): SessionInfo | null {
     const row = this.db
-      .query<{ id: string; title: string | null; updated_at: number }, [string]>(
-        "SELECT id, title, updated_at FROM sessions WHERE channel = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+      .query<{ id: string; title: string | null; updated_at: number }, [string, string | null]>(
+        `SELECT id, title, updated_at FROM sessions WHERE channel = ? AND chat_id IS ?
+         ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
       )
-      .get(channel);
+      .get(channel, chatId ?? null);
     return row ? { id: row.id, title: row.title, updatedAt: row.updated_at } : null;
+  }
+
+  /** Which channel and chat a session belongs to (for delivering reminders). */
+  target(sessionId: string): { channel: string; chatId: string | null } | null {
+    const row = this.db
+      .query<{ channel: string; chat_id: string | null }, [string]>("SELECT channel, chat_id FROM sessions WHERE id = ?")
+      .get(sessionId);
+    return row ? { channel: row.channel, chatId: row.chat_id } : null;
   }
 
   /** The last `maxTurns` turns, oldest first. */

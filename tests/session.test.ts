@@ -68,3 +68,16 @@ test("turns survive a restart through the store", () => {
   expect(store.latest("cli")).toMatchObject({ id, title: "save it" });
   expect(store.latest("telegram")).toBeNull();
 });
+
+test("each chat has its own latest session, separate from the CLI", () => {
+  const store = new SessionStore(openDatabase(":memory:"));
+  const cli = store.create("cli");
+  const alice = store.create("telegram", "111");
+  const bob = store.create("telegram", "222");
+  expect(store.latest("cli")?.id).toBe(cli);
+  expect(store.latest("telegram", "111")?.id).toBe(alice);
+  expect(store.latest("telegram", "222")?.id).toBe(bob);
+  expect(store.latest("telegram")).toBeNull();
+  expect(store.target(bob)).toEqual({ channel: "telegram", chatId: "222" });
+  expect(store.target(cli)).toEqual({ channel: "cli", chatId: null });
+});

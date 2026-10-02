@@ -65,6 +65,23 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (name, hash)
   );
   `,
+  `
+  -- Phase 5: chat apps. Each Telegram/WhatsApp chat has its own current session.
+  ALTER TABLE sessions ADD COLUMN chat_id TEXT;
+  CREATE INDEX sessions_by_chat ON sessions(channel, chat_id, updated_at);
+
+  CREATE TABLE reminders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL,             -- delivered to the chat this session belongs to
+    text        TEXT NOT NULL,
+    due_at      INTEGER NOT NULL,
+    repeat      TEXT CHECK (repeat IN ('daily', 'weekly')),
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'cancelled')),
+    created_at  INTEGER NOT NULL,
+    sent_at     INTEGER
+  );
+  CREATE INDEX reminders_due ON reminders(status, due_at);
+  `,
 ];
 
 export function openDatabase(path: string): Database {
