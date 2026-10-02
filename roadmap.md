@@ -93,7 +93,7 @@ complex, and have a wide attack surface.
 
 ### ❌ Out of scope (mention as future work)
 
-- WhatsApp / iMessage / Signal (unofficial APIs, ban risk).
+- iMessage / Signal. (WhatsApp moved **into** scope in Phase 5, both official and unofficial, as a comparison.)
 - Full browser automation (Playwright) — stretch goal.
 - Voice, mobile app, multi-user tenancy, public skill marketplace.
 - Running untrusted skills in containers (design only, stretch to implement).
@@ -185,7 +185,7 @@ report a clear **"novel contribution"** chapter with something to measure.
 - `/panic` (Telegram or CLI) immediately cancels running tools, pauses the scheduler and locks
   dangerous tools until `/resume`.
 - Daily budgets: e.g. at most 20 shell commands and 50 web fetches per day, configurable.
-- **Phase:** 5.
+- **Phase:** 5. **Status:** implemented (`src/security/guard.ts`). The pause is a file (`data/PAUSED`), so a restart doesn't lift it; budgets are counted from the audit log; `/panic` from any chat also stops running work in every chat and pauses reminders.
 
 | # | Innovation | Priority | Phase | Report value |
 |---|---|---|---|---|
@@ -583,13 +583,17 @@ export interface Channel {
 - [x] Agent robustness for small models: empty-reply retry, "announced but didn't act" nudge, **verified actions** (claims without a tool call are flagged).
 - **Milestone M4:** New skill added by dropping a folder, used without code changes. ✅ (`wikipedia` was added this way)
 
-### Phase 5 — Gateway + Telegram + Scheduler (Week 11–12)
-- [ ] `miniclaw gateway` long-running process.
-- [ ] Telegram adapter (grammy), owner allow-list, inline-button approvals.
-- [ ] Scheduler: reminders (one-shot + cron), daily heartbeat briefing.
-- [ ] Graceful shutdown, restart-safe pending reminders.
-- [ ] 🚀 **I-9** `/panic`, `/resume`, daily action budgets.
+### Phase 5 — Gateway + Telegram + WhatsApp + Scheduler (Week 11–12)
+- [x] `miniclaw gateway` long-running process; shared `runtime.ts` with the CLI; one conversation per chat.
+- [x] Telegram adapter (plain Bot API over fetch, long polling), owner allow-list, inline-button approvals.
+- [x] **WhatsApp, official Cloud API:** signed webhooks (HMAC verified), reply-button approvals, served on the gateway's HTTP server via ngrok.
+- [x] **WhatsApp, unofficial (Baileys):** QR linking, "Message yourself" mode, reply-loop protection, `@lid` addressing.
+- [x] Scheduler: reminders (one-off, daily, weekly) with `set_reminder` / `list_reminders` / `cancel_reminder`; daily briefing.
+- [x] Graceful shutdown; restart-safe reminders (missed repeats are skipped, not spammed); undeliverable reminders retried.
+- [x] 🚀 **I-9** `/panic`, `/resume`, daily action budgets.
 - **Milestone M5:** Set reminder from phone → receive it on time → approve a shell command from phone.
+  ✅ Verified end to end with qwen2.5:7b against a **fake** Telegram API (reminder set by chat, listed, delivered on time);
+  approvals by button are covered by automated tests. Still to do with real accounts: the live Telegram and WhatsApp runs.
 
 ### Phase 6 — Web Dashboard (Week 13)
 - [ ] Express server on `127.0.0.1`, token-protected.
@@ -673,6 +677,10 @@ Material for the evaluation chapter: each failure mode was found in a live run, 
 | F7 | Re-calls an active skill | Called `weather()` again instead of `web_fetch` | An already-active skill returns a short "take the next step" reminder |
 | F8 | Follows injected instructions? | A file told the AI to remember a fake fact | The model refused (untrusted-content rule); the memory inbox + ⚠ provenance warning is a second layer |
 | F9 | Large API responses | GitHub commits endpoint: 31 KB | `web_fetch` `fields` selection (31 KB → a few hundred characters) |
+| F10 | Stale context in proactive messages | The morning briefing repeated an already-delivered reminder from an old chat turn instead of trusting `list_reminders` | Each briefing starts a fresh conversation |
+
+Non-model bug found the same way: if input closed while an approval question was open, Bun's readline spun at
+100% CPU forever. Open questions now resolve as "no" when input closes.
 
 Known remaining limitation: when a real change *did* happen, the model can still misdescribe it (e.g. mention a second
 entry that wasn't written). Verified actions only catches claims with no backing action at all.

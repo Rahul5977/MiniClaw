@@ -15,8 +15,9 @@ and an undo button.
 | 2. Agent loop + tools, undo (I-1), plan preview (I-2), risk scoring (I-4) | ✅ Done |
 | 3. Persistence & memory, memory inbox (I-5) | ✅ Done |
 | 4. Skills, permission manifests (I-6), verified actions | ✅ Done |
-| 5. Gateway, Telegram, scheduler (+ panic button, I-9) | ⏳ Next |
-| 6–8 | Planned |
+| 5. Gateway: Telegram + WhatsApp (official & unofficial), reminders, daily briefing, panic button (I-9) | ✅ Done |
+| 6. Web dashboard (+ flight recorder, I-8) | ⏳ Next |
+| 7–8 | Planned |
 
 ## Quick start
 
@@ -58,6 +59,7 @@ miniclaw › I created summary.md with two key points from notes.txt.
 | `web_fetch` | Download a web page as text; for JSON APIs, return only chosen `fields` | medium – high |
 | `remember` | Propose a fact about you for long-term memory (you confirm it) | low |
 | `recall_notes` | Read the daily log of a given day | low |
+| `set_reminder`, `list_reminders`, `cancel_reminder` | Reminders, one-off or daily/weekly | low |
 | *each skill* | Returns the skill's instructions (asks for consent on first use) | high once, then low |
 
 ### Chat commands
@@ -72,6 +74,9 @@ miniclaw › I created summary.md with two key points from notes.txt.
 | `/undo [n]` | Undo the last *n* file changes made by the agent |
 | `/history` | List agent changes that can be undone |
 | `/skills` | List installed skills, their permissions and consent status |
+| `/reminders [cancel <n>]` | Upcoming reminders (delivered by the gateway) |
+| `/status` | Pause state and today's action budgets |
+| `/panic`, `/resume` | Emergency stop for risky actions, and lifting it |
 | `/tools` | List available tools |
 | `/new` | New conversation (also forgets "always allow" approvals). Otherwise the last conversation continues after a restart. |
 | `/help`, `/exit` | Help, quit (or Ctrl+D) |
@@ -94,6 +99,78 @@ you › I'm vegetarian and I'm in Goa this week.
   If a proposal comes after the agent read a web page or file, you get a ⚠ prompt-injection warning naming the source.
 - **Persona:** edit `data/memory/IDENTITY.md` to change MiniClaw's personality and rules.
 - **Daily notes:** `data/memory/notes/YYYY-MM-DD.md` logs each request and the actions taken.
+
+## Chat apps (`miniclaw gateway`)
+
+Run `bun run gateway` to reach MiniClaw from your phone. Each chat has its own conversation.
+Approvals arrive as buttons (or numbered questions), unanswered questions count as "no" after 10 minutes,
+and reminders are delivered to the chat they were set in. Only allowlisted people get answers;
+everyone else is ignored silently.
+
+| | Telegram | WhatsApp Cloud API (official) | WhatsApp Web via Baileys (unofficial) |
+|---|---|---|---|
+| Setup | 5 min, two bots in Telegram | ~20 min, Meta developer account | 2 min, scan a QR code |
+| Public URL needed | No (long polling) | Yes, a webhook (ngrok) | No |
+| Approval buttons | Inline buttons | Reply buttons (max 3) | Numbered replies |
+| Allowed by the app's terms | Yes | Yes | **No**: the number can be banned |
+| Messaging you first (reminders, briefing) | Any time | Only within 24 h of your last message (else needs templates) | Any time |
+| Webhook security | n/a | Every request's HMAC signature is verified | n/a |
+
+### Telegram
+
+1. In Telegram, message **@BotFather**, send `/newbot`, follow the steps and copy the **token**.
+2. Message **@userinfobot**; it replies with your numeric **Id**.
+3. In `.env`: `TELEGRAM_BOT_TOKEN=<token>` and `TELEGRAM_ALLOWED_USERS=<your id>`.
+4. `bun run doctor`, then `bun run gateway`, and send your bot a message.
+
+### WhatsApp: official Cloud API
+
+1. On [developers.facebook.com](https://developers.facebook.com), create an app of type **Business** and add the **WhatsApp** product.
+2. In **WhatsApp > API Setup**:
+   - copy the temporary **access token** (it lasts 24 h) and the **Phone number ID**;
+   - add your own phone under the "To" numbers and verify it with the code WhatsApp sends.
+3. In **App settings > Basic**, copy the **App secret**.
+4. In `.env`, set:
+   - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` and `WHATSAPP_APP_SECRET`,
+   - `WHATSAPP_VERIFY_TOKEN` (any string you choose),
+   - `WHATSAPP_ALLOWED_NUMBERS=<your number with country code, e.g. 919876543210>`.
+5. Start `bun run gateway`, then in a second terminal run `ngrok http 8787` and copy its `https://…` URL.
+6. In **WhatsApp > Configuration > Webhook**, set:
+   - **Callback URL** to `https://<ngrok-url>/webhooks/whatsapp`,
+   - **Verify token** to the same value as `WHATSAPP_VERIFY_TOKEN`.
+
+   Click **Verify and save**, then subscribe to the **messages** field.
+7. Send a WhatsApp message to the test number.
+
+The free ngrok URL changes on every restart (update the callback URL). For longer than 24 hours, create a
+permanent token with a System User in Meta Business Settings.
+
+### WhatsApp: unofficial (Baileys)
+
+> ⚠️ This links MiniClaw like WhatsApp Web. It breaks WhatsApp's terms of service and the number can be
+> banned. **Use a spare number**, not your main one.
+
+1. In `.env`: `WHATSAPP_WEB_ENABLED=true` and `WHATSAPP_WEB_ALLOWED_NUMBERS=<numbers allowed to talk to it>`.
+2. `bun run gateway` prints a QR code. On the phone with the number you want to link, open
+   **WhatsApp > Settings > Linked devices > Link a device** and scan it.
+3. Use it in one of two ways:
+   - **Spare number linked:** message it from your main phone (allowlist your main number).
+   - **Your own number linked:** use the **"Message yourself"** chat (allowlist your own number). MiniClaw only
+     answers that chat, never your conversations with other people. Its replies start with 🦀.
+
+The session is saved in `data/whatsapp-auth/`. Treat it like a password, and delete it to unlink.
+
+### In chat
+
+Send a normal message to talk. Commands: `/help`, `/new`, `/stop`, `/undo [n]`, `/history`, `/memory`, `/inbox`,
+`/forget <words>`, `/reminders [cancel <n>]`, `/skills`, `/status`, `/panic`, `/resume`.
+
+- **Reminders:** "remind me to call mom at 18:00" or "every day at 08:00 remind me to stretch".
+- **Daily briefing:** set `"gateway": { "briefingTime": "08:00" }` in `miniclaw.config.json` and MiniClaw messages you
+  first each morning with today's reminders and a recap of yesterday.
+- **Panic button (I-9):** `/panic` from any chat stops all running work and blocks risky actions until `/resume`.
+  This also works from the terminal. Daily budgets cap risky tools (defaults: 30 shell commands, 60 web fetches and
+  60 file writes per day; change them with `agent.budgets`).
 
 ## Skills
 
@@ -186,9 +263,12 @@ src/
 │   ├── prompt.ts          # system prompt: identity + memory + tool rules
 │   ├── session.ts         # conversation as whole turns, fitted to the token budget
 │   └── tokens.ts          # token estimates
+├── channels/              # cli.ts (terminal), telegram.ts, whatsappCloud.ts, whatsappWeb.ts
+├── gateway/               # Gateway (routing, reminders, briefing), Conversation (per chat), channel config
+├── scheduler/             # reminders store and scheduler
+├── runtime.ts             # shared wiring for the CLI and the gateway
 ├── db/                    # SQLite: migrations, session store
 ├── memory/                # MEMORY.md facts, inbox (I-5), IDENTITY.md, daily notes
-├── channels/cli.ts        # terminal UI, approval prompts, slash commands
 ├── llm/                   # provider interface + OpenAI-compatible client (streaming tool calls)
 ├── skills/                # SKILL.md loader, permission manifests (I-6), consent grants
 ├── security/

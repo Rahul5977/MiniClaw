@@ -12,7 +12,8 @@
     "chat": "bun src/index.ts chat",
     "doctor": "bun src/index.ts doctor",
     "typecheck": "tsc",
-    "test": "bun test"
+    "test": "bun test",
+    "gateway": "bun src/index.ts gateway"
   },
   "keywords": [],
   "author": "Rahul Raj",
