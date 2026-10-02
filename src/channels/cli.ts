@@ -367,11 +367,13 @@ class Renderer {
 /** Asks for approval in the terminal. Ctrl+C while asking counts as "no". */
 class CliApprover implements Approver {
   private closed = false;
+  private mainPrompt: string;
 
   constructor(
     private rl: Interface,
     private signal: () => AbortSignal | undefined,
   ) {
+    this.mainPrompt = rl.getPrompt();
     // After Ctrl+D (or the end of piped input) every question answers null, i.e. "no"/"later".
     rl.on("close", () => (this.closed = true));
   }
@@ -406,16 +408,23 @@ class CliApprover implements Approver {
     const signal = this.signal();
     if (signal?.aborted || this.closed) return Promise.resolve(null);
     return new Promise((resolve) => {
-      const onAbort = () => {
-        output.write("\n");
-        resolve(null);
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      // Passing the signal cancels the pending question, so it can't swallow the next line typed.
-      this.rl.question(prompt, { signal }, (answer) => {
-        signal?.removeEventListener("abort", onAbort);
+      const finish = (answer: string | null) => {
+        signal?.removeEventListener("abort", onEnd);
+        this.rl.off("close", onEnd);
+        // A cut-short question leaves its text as readline's prompt; put the normal one back.
+        this.rl.setPrompt(this.mainPrompt);
         resolve(answer);
-      });
+      };
+      // Ctrl+C, or input closing (Ctrl+D / end of piped input) while a question is open.
+      // Without the close handler the question never resolves and Bun's readline spins at 100% CPU.
+      const onEnd = () => {
+        output.write("\n");
+        finish(null);
+      };
+      signal?.addEventListener("abort", onEnd, { once: true });
+      this.rl.once("close", onEnd);
+      // Passing the signal cancels the pending question, so it can't swallow the next line typed.
+      this.rl.question(prompt, { signal }, (answer) => finish(answer));
     });
   }
 }
