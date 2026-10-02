@@ -2,6 +2,7 @@ import type { LLMProvider, ToolCall } from "../llm/provider.ts";
 import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts";
 import type { AuditLog } from "../security/audit.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
+import type { DailyNotes } from "../memory/notes.ts";
 import type { Checkpoints } from "../workspace/checkpoints.ts";
 import { truncate } from "../tools/format.ts";
 import type { Session, TurnMessage } from "./session.ts";
@@ -31,6 +32,8 @@ export interface AgentDeps {
   checkpoints: Checkpoints;
   workspace: string;
   maxSteps: number;
+  /** Optional daily log: one line per turn with the request and the actions taken. */
+  notes?: DailyNotes;
   /** The model's context window and the part of it kept free for the reply. */
   contextTokens: number;
   replyTokens: number;
@@ -52,6 +55,7 @@ export class Agent {
     const turn: TurnMessage[] = [{ role: "user", content: userText }];
     // Where untrusted content entered this turn; tools like remember record it (I-5, I-3).
     const untrusted = new Set<string>();
+    const actions: string[] = [];
     // Messages up to this index form a valid conversation (no tool call without its result).
     let consistent = 1;
     let finished = false;
@@ -79,8 +83,10 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const output = yield* this.execute(call, { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted });
+          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted };
+          const { output, done } = yield* this.execute(call, ctx);
           for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
+          if (done) actions.push(done);
           // One tool result may use at most ~30% of the window, whatever the tool's own cap.
           turn.push({ role: "tool", toolCallId: call.id, content: truncate(output, Math.floor(contextTokens * 0.3 * 3.5)) });
         }
@@ -97,10 +103,12 @@ export class Agent {
       const kept = turn.slice(0, consistent);
       if (!finished) kept.push({ role: "assistant", content: STOPPED });
       session.addTurn(kept);
+      const request = userText.length > 120 ? `${userText.slice(0, 120)}…` : userText;
+      this.deps.notes?.append(`"${request}"${actions.length ? ` → ${actions.join("; ")}` : ""}${finished ? "" : " (stopped)"}`);
     }
   }
 
-  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, string> {
+  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, { output: string; done?: string }> {
     const { tools, policy, approver, audit, checkpoints } = this.deps;
     const { signal, sessionId } = ctx;
 
@@ -109,7 +117,7 @@ export class Agent {
       // Tell the model what was wrong so it can fix the call on the next step.
       const output = `Error: ${parsed.error}`;
       yield { type: "tool_end", callId: call.id, tool: call.name, verdict: "invalid", ok: false, output, changes: [] };
-      return output;
+      return { output };
     }
     const { tool, args } = parsed;
     const summary = tool.summarize(args);
@@ -161,6 +169,7 @@ export class Agent {
       result: output,
     });
     yield { type: "tool_end", callId: call.id, tool: tool.name, verdict, ok, output, changes };
-    return output;
+    // `done` is the one-line summary of a successful action, for the daily notes.
+    return { output, done: ok ? summary : undefined };
   }
 }

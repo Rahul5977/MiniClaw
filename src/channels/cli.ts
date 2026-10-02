@@ -13,11 +13,12 @@ import type { LLMProvider } from "../llm/provider.ts";
 import { FactStore } from "../memory/facts.ts";
 import { loadIdentity } from "../memory/identity.ts";
 import { MemoryInbox } from "../memory/inbox.ts";
+import { DailyNotes } from "../memory/notes.ts";
 import { ApprovalPolicy, type ApprovalRequest, type Approver, type Decision } from "../security/approvals.ts";
 import { AuditLog } from "../security/audit.ts";
 import { prepareWorkspace } from "../security/sandbox.ts";
 import { listDirTool, readFileTool, writeFileTool } from "../tools/files.ts";
-import { createRememberTool } from "../tools/memory.ts";
+import { createRecallNotesTool, createRememberTool } from "../tools/memory.ts";
 import { runShellTool } from "../tools/shell.ts";
 import { ToolRegistry, type RiskLevel } from "../tools/tool.ts";
 import { webFetchTool } from "../tools/web.ts";
@@ -54,6 +55,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
   facts.removeExpired();
   const inbox = new MemoryInbox(db, facts);
   const identityPath = join(memoryDir, "IDENTITY.md");
+  const notes = new DailyNotes(join(memoryDir, "notes"));
 
   const tools = new ToolRegistry([
     readFileTool,
@@ -62,6 +64,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     runShellTool,
     webFetchTool,
     createRememberTool(inbox),
+    createRecallNotesTool(notes),
   ]);
   const sessions = new SessionStore(db);
   const openSession = (id: string) =>
@@ -91,6 +94,7 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     approver,
     audit: new AuditLog(db),
     checkpoints,
+    notes,
     workspace,
     maxSteps: config.agent.maxSteps,
     contextTokens: config.agent.contextTokens,
