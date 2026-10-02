@@ -76,6 +76,21 @@ export class Conversation {
     if (text) await this.run(text);
   }
 
+  /**
+   * Runs a request MiniClaw starts itself (e.g. the morning briefing), skipped if the
+   * chat is busy. With `fresh`, it starts a new conversation first, so stale context
+   * (like an already-delivered reminder) can't leak in; the user's replies continue there.
+   */
+  async runTask(text: string, { fresh = false } = {}): Promise<boolean> {
+    if (this.running || this.pending) return false;
+    if (fresh) {
+      this.session = this.runtime.openSession(this.runtime.sessions.create(this.channel.name, this.chatId));
+      this.policy.reset();
+    }
+    await this.run(text);
+    return true;
+  }
+
   /** Cancels the running request and any open question. */
   stop(): boolean {
     if (!this.running) return false;

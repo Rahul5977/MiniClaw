@@ -35,6 +35,8 @@ export const ConfigSchema = z.object({
     defaultChat: z.string().optional(),
     // Unanswered approval questions count as "no" after this long.
     answerTimeoutMinutes: z.number().min(1).default(10),
+    // Daily proactive briefing to the default chat, e.g. "08:00". Off when null.
+    briefingTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "use HH:MM, 24-hour").nullable().default(null),
   }).prefault({}),
   channels: z.object({
     telegram: z.object({

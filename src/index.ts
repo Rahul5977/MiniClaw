@@ -56,10 +56,14 @@ program
       defaultChat: config.gateway.defaultChat,
       answerTimeoutMs: config.gateway.answerTimeoutMinutes * 60_000,
       http: { host: config.gateway.host, port: config.gateway.port },
+      ...(config.gateway.briefingTime && {
+        briefing: { time: config.gateway.briefingTime, stateFile: join(config.paths.data, "last-briefing") },
+      }),
     });
     await gateway.start();
     console.log(`🦀 ${config.agent.name} gateway running · model ${llm.model} · channels: ${channels.map((c) => c.name).join(", ")}`);
     if (runtime.guard.paused) console.log(`⛔ ${runtime.guard.pausedInfo()} — send /resume from a chat to continue.`);
+    if (config.gateway.briefingTime) console.log(`☀️ Daily briefing at ${config.gateway.briefingTime}`);
     console.log("Press Ctrl+C to stop.");
 
     const shutdown = async () => {

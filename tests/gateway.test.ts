@@ -145,3 +145,22 @@ test("channel routes are served on the gateway's HTTP server", async () => {
   expect((await fetch(`${gateway.url}/other`)).status).toBe(404);
   await gateway.stop();
 });
+
+test("the daily briefing is sent once per day after its time, to the owner", async () => {
+  const llm = new ScriptedLLM([{ calls: [{ name: "list_reminders", arguments: "{}" }] }, { text: "☀️ Good morning! No reminders today." }]);
+  const { runtime, root } = await testRuntime(llm);
+  const channel = new FakeChannel("telegram", [OWNER]);
+  const gateway = new Gateway(runtime, [channel], { briefing: { time: "08:00", stateFile: join(root, "briefing") } });
+  await gateway.start();
+
+  expect(await gateway.maybeBrief(new Date("2026-10-02T07:59:00"))).toBe(false);
+  expect(await gateway.maybeBrief(new Date("2026-10-02T08:00:30"))).toBe(true);
+  expect(await gateway.maybeBrief(new Date("2026-10-02T12:00:00"))).toBe(false); // already sent today
+  expect(channel.sent.map((s) => [s.chatId, s.text])).toEqual([[OWNER, "☀️ Good morning! No reminders today."]]);
+  expect(llm.seen[0]?.at(-1)?.content).toContain("Scheduled morning briefing");
+  expect(llm.seen[0]?.filter((m) => m.role === "user")).toHaveLength(1); // fresh conversation, no stale context
+
+  runtime.guard.pause("test");
+  expect(await gateway.maybeBrief(new Date("2026-10-03T08:05:00"))).toBe(false); // paused
+  await gateway.stop();
+});
