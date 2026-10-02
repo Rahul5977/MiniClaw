@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   llm: z.object({
     baseURL: z.url().default("http://localhost:11434/v1"),
     model: z.string().trim().min(1).default("qwen2.5:7b"),
