@@ -14,8 +14,9 @@ and an undo button.
 | 1. CLI + LLM (chat, streaming, doctor) | ✅ Done |
 | 2. Agent loop + tools, undo (I-1), plan preview (I-2), risk scoring (I-4) | ✅ Done |
 | 3. Persistence & memory, memory inbox (I-5) | ✅ Done |
-| 4. Skills (+ permission manifests, I-6) | ⏳ Next |
-| 5–8 | Planned |
+| 4. Skills, permission manifests (I-6), verified actions | ✅ Done |
+| 5. Gateway, Telegram, scheduler (+ panic button, I-9) | ⏳ Next |
+| 6–8 | Planned |
 
 ## Quick start
 
@@ -54,9 +55,10 @@ miniclaw › I created summary.md with two key points from notes.txt.
 | `list_dir` | List a workspace folder | low (auto) |
 | `write_file` | Create, overwrite or append to a file (shows a diff) | medium |
 | `run_shell` | Run a shell command in the workspace | medium – blocked |
-| `web_fetch` | Download a web page as text | medium – high |
+| `web_fetch` | Download a web page as text; for JSON APIs, return only chosen `fields` | medium – high |
 | `remember` | Propose a fact about you for long-term memory (you confirm it) | low |
 | `recall_notes` | Read the daily log of a given day | low |
+| *each skill* | Returns the skill's instructions (asks for consent on first use) | high once, then low |
 
 ### Chat commands
 
@@ -69,6 +71,7 @@ miniclaw › I created summary.md with two key points from notes.txt.
 | `/notes [date]` | Show the daily log (`today`, `yesterday` or `YYYY-MM-DD`) |
 | `/undo [n]` | Undo the last *n* file changes made by the agent |
 | `/history` | List agent changes that can be undone |
+| `/skills` | List installed skills, their permissions and consent status |
 | `/tools` | List available tools |
 | `/new` | New conversation (also forgets "always allow" approvals). Otherwise the last conversation continues after a restart. |
 | `/help`, `/exit` | Help, quit (or Ctrl+D) |
@@ -92,6 +95,37 @@ you › I'm vegetarian and I'm in Goa this week.
 - **Persona:** edit `data/memory/IDENTITY.md` to change MiniClaw's personality and rules.
 - **Daily notes:** `data/memory/notes/YYYY-MM-DD.md` logs each request and the actions taken.
 
+## Skills
+
+A skill is a folder with a `SKILL.md`: instructions for a task plus the permissions it needs. Drop a folder into
+`skills/` and restart. No code changes are needed. Included: `weather` (wttr.in), `github-summary` (GitHub API),
+`daily-journal` (files in the workspace) and `wikipedia` (topic summaries).
+
+```markdown
+---
+name: weather
+description: Current weather and a 3-day forecast for any city, from wttr.in.
+permissions:
+  - net:wttr.in
+---
+# Weather
+1. For the current weather, call web_fetch with https://wttr.in/<City>?format=...
+```
+
+| Permission | Allows |
+|---|---|
+| `fs:read` / `fs:write` | read / change files in the workspace |
+| `net:<host>` | fetch from that host (`*.example.com` for subdomains, `*` for any) |
+| `shell:<program>` | run simple commands with that program (`*` for any command) |
+| `memory` | propose memories, read daily notes |
+
+**Permission manifests (I-6):**
+- The first time a skill is used, you approve its permissions, like installing an app.
+- If its `SKILL.md` changes later, you're asked again.
+- While a skill is active, anything outside its permissions is raised to high risk and always asks.
+
+Commands: `miniclaw skills` (list), `miniclaw skills revoke <name>` (ask again next time).
+
 ## Safety model
 
 - **Sandbox:** file tools only work inside `workspace/`. Path traversal, symlink escapes and `.git` are refused.
@@ -105,6 +139,8 @@ you › I'm vegetarian and I'm in Goa this week.
 - **Plan preview (I-2):** approve a whole multi-step task once. Only its medium-risk steps are pre-approved.
 - **Untrusted content:** file and web content is wrapped in `<untrusted>` tags that can't be escaped, and the model is told never to follow instructions inside them.
 - **No secrets to tools:** shell commands get a minimal environment (no API keys); `web_fetch` re-checks every redirect (no SSRF to `localhost`).
+- **Verified actions:** if the model claims "Added to your journal" but never called a tool, you see a warning,
+  and the model is asked once to actually do it. Small models do this surprisingly often.
 - **Audit log:** every tool call is recorded in SQLite (`audit_log`), with secrets redacted.
 
 ## Configuration
@@ -154,11 +190,12 @@ src/
 ├── memory/                # MEMORY.md facts, inbox (I-5), IDENTITY.md, daily notes
 ├── channels/cli.ts        # terminal UI, approval prompts, slash commands
 ├── llm/                   # provider interface + OpenAI-compatible client (streaming tool calls)
+├── skills/                # SKILL.md loader, permission manifests (I-6), consent grants
 ├── security/
 │   ├── sandbox.ts         # workspace path checks
 │   ├── risk.ts            # rule-based risk scoring (I-4)
 │   ├── approvals.ts       # approval policy (auto / session / plan / ask / block)
 │   └── audit.ts           # JSONL audit log with secret redaction
-├── tools/                 # read_file, list_dir, write_file, run_shell, web_fetch, remember, recall_notes
+├── tools/                 # read_file, list_dir, write_file, run_shell, web_fetch, remember, recall_notes, skill tools
 └── workspace/checkpoints.ts  # git-backed undo (I-1)
 ```

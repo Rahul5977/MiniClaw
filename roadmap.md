@@ -158,11 +158,15 @@ report a clear **"novel contribution"** chapter with something to measure.
 - **Phase:** 3. **Status:** implemented (`src/memory/`). Proposals made after reading untrusted content show a prompt-injection warning naming the source. "Confidence" was replaced by this provenance, since a model's self-reported confidence can't be trusted.
 
 ### I-6. Skill Permission Manifests — *Should*
-- `SKILL.md` frontmatter declares `permissions: [net:wttr.in, fs:read, shell:none]`.
-- At first use, MiniClaw shows the permissions, like an Android install screen. At runtime, a call
-  outside the declared permissions is **blocked** while that skill is active.
+- `SKILL.md` frontmatter declares `permissions: [net:wttr.in, fs:read, fs:write, shell:ls, memory]`.
+- At first use, MiniClaw shows the permissions in plain language, like an Android install screen. Consent is
+  stored per **hash of SKILL.md**: if the file changes (e.g. an update adds `net:*`), consent is asked again.
+- At runtime, a call outside the active skill's declared permissions is **escalated to high risk** (always asks,
+  with the reason "outside what the active skill declared"). This was chosen over blocking outright, because
+  users often combine a skill with an ordinary request ("get the weather and save it to a file").
+  Permissions only ever restrict; they never let a call skip normal approval.
 - **Why it matters:** malicious third-party skills were a real OpenClaw problem; this limits what one can do.
-- **Phase:** 4.
+- **Phase:** 4. **Status:** implemented (`src/skills/`, `src/tools/skills.ts`).
 
 ### I-7. Hybrid Privacy Router — *Could*
 - Local PII detector (regex + simple rules: phone, email, Aadhaar/PAN patterns, addresses).
@@ -385,13 +389,16 @@ data/
 ```
 skills/
 └── weather/
-    ├── SKILL.md      # frontmatter: name, description, tools_needed; body: instructions
-    └── weather.sh    # optional helper script (runs via run_shell with approval)
+    └── SKILL.md      # YAML frontmatter: name, description, permissions; Markdown body: instructions
 ```
 
-- At startup the **Skill Loader** reads only the frontmatter → builds a short *skill index* for the prompt.
-- When relevant, the agent calls `load_skill(name)` to pull the full instructions (keeps prompt small — same trick OpenClaw/Claude skills use).
-- Skills **cannot** bypass approvals; they are just instructions.
+- At startup the **skill loader** validates every `skills/*/SKILL.md`. A broken skill is reported, not fatal.
+- Each skill is exposed to the model as **its own no-argument tool** named after the skill (`weather()`).
+  Calling it asks for consent on first use and returns the instructions; only names and descriptions cost tokens up front.
+  - *Why not one `load_skill(name)` tool?* qwen2.5:7b consistently called `weather()` directly. Ollama silently
+    drops calls to tools that don't exist, so the user got an empty reply. Matching the model's instinct fixed it.
+- Skills **cannot** bypass approvals; they are instructions plus a permission ceiling (I-6).
+- Helper scripts inside skills are future work (they would run outside the workspace sandbox).
 
 ### 5.6 Database Schema (SQLite)
 
@@ -568,11 +575,13 @@ export interface Channel {
 - **Milestone M3:** Agent recalls a fact told in a previous run after restart. ✅
 
 ### Phase 4 — Skills (Week 10)
-- [ ] Skill loader (frontmatter parsing with `gray-matter`), skill index in prompt, `load_skill` tool.
-- [ ] Write 3 sample skills: `weather` (wttr.in), `github-summary`, `daily-journal`.
-- [ ] `miniclaw skills list`.
-- [ ] 🚀 **I-6 Permission manifests** in SKILL.md frontmatter + runtime enforcement.
-- **Milestone M4:** New skill added by dropping a folder, used without code changes.
+- [x] Skill loader (frontmatter via built-in `Bun.YAML`), skill list in prompt. Each skill is its own tool (see §5.5 for why not `load_skill`).
+- [x] Sample skills: `weather` (wttr.in), `github-summary`, `daily-journal`, plus `wikipedia`.
+- [x] `miniclaw skills`, `miniclaw skills revoke <name>`, `/skills`.
+- [x] 🚀 **I-6 Permission manifests** in SKILL.md frontmatter + runtime enforcement.
+- [x] `web_fetch` JSON `fields` selection, so API responses fit a 4k context window.
+- [x] Agent robustness for small models: empty-reply retry, "announced but didn't act" nudge, **verified actions** (claims without a tool call are flagged).
+- **Milestone M4:** New skill added by dropping a folder, used without code changes. ✅ (`wikipedia` was added this way)
 
 ### Phase 5 — Gateway + Telegram + Scheduler (Week 11–12)
 - [ ] `miniclaw gateway` long-running process.
@@ -648,6 +657,25 @@ Build a set of **30–50 tasks** (e.g. "create a file", "find X in a webpage", "
 Present as tables + bar charts in the report.
 
 ---
+
+## 10A. Findings from Live Testing (qwen2.5:7b on Ollama)
+
+Material for the evaluation chapter: each failure mode was found in a live run, reproduced, and fixed in code.
+
+| # | Failure mode | How it showed up | Fix (commit area) |
+|---|---|---|---|
+| F1 | Context overflow | Ollama runs the model with 4096 tokens (model supports 32k) and silently drops the start of longer prompts | Token-budgeted context, tool output capped at ~30% of the window, `doctor` checks Ollama's real window |
+| F2 | Calls a tool that doesn't exist | Model called `weather()` instead of `load_skill("weather")`; Ollama dropped the call → empty reply | Each skill is its own tool; empty replies are retried once with the exact tool names |
+| F3 | Announces but doesn't act | "Let's do that now." and then stops | One nudge when a reply ends by promising an action |
+| F4 | Claims actions it never took | "Added to today's journal." with no `write_file` call | **Verified actions**: the claim is flagged to the user and the model is asked once to make the real call |
+| F5 | Echoes code-style examples as text | Wrote `write_file({...})` in its reply instead of calling the tool | Skill instructions in plain prose; journal skill went from 0/3 to 5/5 successful writes |
+| F6 | Copies example values | Used the example time "14:36" and example wording instead of the real ones | Examples use unrelated content; instructions point to the system prompt for date/time |
+| F7 | Re-calls an active skill | Called `weather()` again instead of `web_fetch` | An already-active skill returns a short "take the next step" reminder |
+| F8 | Follows injected instructions? | A file told the AI to remember a fake fact | The model refused (untrusted-content rule); the memory inbox + ⚠ provenance warning is a second layer |
+| F9 | Large API responses | GitHub commits endpoint: 31 KB | `web_fetch` `fields` selection (31 KB → a few hundred characters) |
+
+Known remaining limitation: when a real change *did* happen, the model can still misdescribe it (e.g. mention a second
+entry that wasn't written). Verified actions only catches claims with no backing action at all.
 
 ## 11. Security Model
 
