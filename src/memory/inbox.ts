@@ -30,11 +30,30 @@ export class MemoryInbox {
     private facts: FactStore,
   ) {}
 
-  /** Returns null if the fact is already known or already waiting for review. */
+  /**
+   * Returns null if the fact is already known. A fact that is already waiting for
+   * review is brought forward (with the new context) so the user is asked again now.
+   */
   propose(input: { fact: string; sessionId?: string; expires?: string; untrustedSources?: string[] }): Proposal | null {
     const fact = cleanFact(input.fact);
-    const known = (f: string) => f.trim().toLowerCase() === fact.toLowerCase();
-    if (this.facts.all().some((f) => known(f.text)) || this.pending().some((p) => known(p.fact))) return null;
+    const same = (f: string) => f.trim().toLowerCase() === fact.toLowerCase();
+    if (this.facts.all().some((f) => same(f.text))) return null;
+
+    const waiting = this.pending().find((p) => same(p.fact));
+    if (waiting) {
+      const row = this.db
+        .query<Row, [string | null, string | null, string, number, number]>(
+          "UPDATE memory_inbox SET session_id = ?, expires_at = ?, untrusted_sources = ?, created_at = ? WHERE id = ? RETURNING *",
+        )
+        .get(
+          input.sessionId ?? null,
+          input.expires ?? null,
+          JSON.stringify([...new Set([...waiting.untrustedSources, ...(input.untrustedSources ?? [])])]),
+          Date.now(),
+          waiting.id,
+        )!;
+      return fromRow(row);
+    }
 
     const row = this.db
       .query<Row, [string, string | null, string | null, string, number]>(
@@ -45,11 +64,12 @@ export class MemoryInbox {
     return fromRow(row);
   }
 
-  pending(sessionId?: string): Proposal[] {
-    const rows = sessionId
-      ? this.db.query<Row, [string]>("SELECT * FROM memory_inbox WHERE status = 'pending' AND session_id = ? ORDER BY id").all(sessionId)
-      : this.db.query<Row, []>("SELECT * FROM memory_inbox WHERE status = 'pending' ORDER BY id").all();
-    return rows.map(fromRow);
+  /** Pending proposals, optionally only those made (or re-made) since a time. */
+  pending(since = 0): Proposal[] {
+    return this.db
+      .query<Row, [number]>("SELECT * FROM memory_inbox WHERE status = 'pending' AND created_at >= ? ORDER BY created_at, id")
+      .all(since)
+      .map(fromRow);
   }
 
   accept(id: number): Fact | null {

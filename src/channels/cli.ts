@@ -10,7 +10,7 @@ import type { Config } from "../config.ts";
 import { openDatabase } from "../db/database.ts";
 import { SessionStore } from "../db/sessions.ts";
 import type { LLMProvider } from "../llm/provider.ts";
-import { FactStore } from "../memory/facts.ts";
+import { addDays, FactStore, today } from "../memory/facts.ts";
 import { loadIdentity } from "../memory/identity.ts";
 import { MemoryInbox } from "../memory/inbox.ts";
 import { DailyNotes } from "../memory/notes.ts";
@@ -35,13 +35,17 @@ const bold = color(1);
 const RISK_COLOR: Record<RiskLevel, (s: string) => string> = { low: dim, medium: yellow, high: red, blocked: red };
 
 const HELP = `Commands:
-  /plan <task> preview the agent's plan with risk levels, approve it once, then run it
-  /undo [n]   undo the last n file changes made by the agent (default 1)
-  /history    list recent agent changes that can be undone
-  /tools      list the tools the agent can use
-  /new        start a new conversation (also forgets "always allow" approvals)
-  /help       show this help
-  /exit       quit (or press Ctrl+D)
+  /plan <task>     preview the agent's plan with risk levels, approve it once, then run it
+  /memory          show what MiniClaw remembers about you
+  /inbox           review memories the agent proposed
+  /forget <words>  delete remembered facts containing these words
+  /notes [date]    show the daily log (today, yesterday or YYYY-MM-DD)
+  /undo [n]        undo the last n file changes made by the agent (default 1)
+  /history         list recent agent changes that can be undone
+  /tools           list the tools the agent can use
+  /new             start a new conversation (also forgets "always allow" approvals)
+  /help            show this help
+  /exit            quit (or press Ctrl+D)
 While the agent is working, press Ctrl+C to stop it.`;
 
 export async function startCliChat(config: Config, llm: LLMProvider): Promise<void> {
@@ -119,7 +123,9 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
       if (command === "exit" || command === "quit") break;
       await runCommand(command.toLowerCase(), rest.join(" ") || undefined);
     } else if (line) {
+      const started = Date.now();
       await runAgent(line);
+      await reviewInbox(started);
     }
     rl.prompt();
   }
@@ -154,6 +160,35 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
         if (!arg) return void console.log(red("Usage: /plan <task>\n"));
         await runPlan(arg);
         return;
+      case "memory": {
+        const known = facts.all();
+        if (known.length === 0) console.log(dim("I don't remember anything about you yet."));
+        known.forEach((f, i) => console.log(`${dim(`${i + 1}.`)} ${f.text}${f.expires ? dim(` (until ${f.expires})`) : ""}`));
+        const waiting = inbox.pending().length;
+        if (waiting) console.log(yellow(`📥 ${waiting} proposed ${waiting === 1 ? "memory is" : "memories are"} waiting — /inbox to review.`));
+        console.log(dim(`Edit by hand: ${facts.path}\n`));
+        return;
+      }
+      case "inbox":
+        if (inbox.pending().length === 0) return void console.log(dim("No memories waiting for review.\n"));
+        await reviewInbox();
+        return;
+      case "forget": {
+        if (!arg) return void console.log(red("Usage: /forget <words>") + dim("  e.g. /forget goa\n"));
+        const matches = facts.search(arg);
+        if (matches.length === 0) return void console.log(dim(`Nothing remembered matches "${arg}".\n`));
+        for (const f of matches) console.log(`  ${red("−")} ${f.text}`);
+        if (await approver.confirm(`Forget ${matches.length === 1 ? "this fact" : `these ${matches.length} facts`}?`)) {
+          facts.remove(matches.map((f) => f.id));
+          console.log(green("Forgotten.\n"));
+        } else console.log(dim("Kept.\n"));
+        return;
+      }
+      case "notes": {
+        const date = !arg || arg === "today" ? today() : arg === "yesterday" ? addDays(today(), -1) : arg;
+        console.log(notes.read(date) ?? dim(`No notes for ${date}.`));
+        return;
+      }
       case "tools":
         for (const tool of tools.list()) console.log(`${bold(tool.name)} ${dim("— " + tool.description)}`);
         console.log();
@@ -163,6 +198,28 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
         return;
       default:
         console.log(red(`Unknown command: /${command}`) + dim(" (try /help)\n"));
+    }
+  }
+
+  /** I-5: ask the user about memories the agent proposed (since a time, or all). */
+  async function reviewInbox(since = 0): Promise<void> {
+    for (const proposal of inbox.pending(since)) {
+      const until = proposal.expires ? dim(` (until ${proposal.expires})`) : "";
+      console.log(`${cyan("📥 Remember this?")} ${bold(proposal.fact)}${until}`);
+      if (proposal.untrustedSources.length) {
+        console.log(red(`   ⚠ proposed after reading ${proposal.untrustedSources.join(", ")}`));
+        console.log(red("     If you didn't say this yourself, it may be a prompt injection."));
+      }
+      const answer = (await approver.prompt(`   ${dim("[")}${bold("y")}es / ${bold("n")}o / ${bold("l")}ater${dim("]")} `))?.trim().toLowerCase();
+      if (answer === "y" || answer === "yes") {
+        inbox.accept(proposal.id);
+        console.log(green("   ✔ saved to memory"));
+      } else if (answer === "n" || answer === "no") {
+        inbox.reject(proposal.id);
+        console.log(dim("   ✖ discarded"));
+      } else {
+        console.log(dim("   kept in /inbox for later"));
+      }
     }
   }
 
@@ -195,7 +252,9 @@ export async function startCliChat(config: Config, llm: LLMProvider): Promise<vo
     const start = await checkpoints.head();
     policy.allowPlan(planScopes(steps));
     try {
+      const started = Date.now();
       await runAgent(planTask(task, steps));
+      await reviewInbox(started);
     } finally {
       policy.clearPlan();
     }
@@ -277,10 +336,15 @@ class Renderer {
 
 /** Asks for approval in the terminal. Ctrl+C while asking counts as "no". */
 class CliApprover implements Approver {
+  private closed = false;
+
   constructor(
     private rl: Interface,
     private signal: () => AbortSignal | undefined,
-  ) {}
+  ) {
+    // After Ctrl+D (or the end of piped input) every question answers null, i.e. "no"/"later".
+    rl.on("close", () => (this.closed = true));
+  }
 
   async ask(request: ApprovalRequest): Promise<Decision> {
     const { risk } = request;
@@ -293,7 +357,7 @@ class CliApprover implements Approver {
       : `${bold("y")}es / ${bold("n")}o`;
 
     while (true) {
-      const answer = await this.question(`    Allow? ${dim("[")}${options}${dim("]")} `);
+      const answer = await this.prompt(`    Allow? ${dim("[")}${options}${dim("]")} `);
       if (answer === null) return "deny";
       const a = answer.trim().toLowerCase();
       if (a === "y" || a === "yes") return "approve";
@@ -303,14 +367,14 @@ class CliApprover implements Approver {
   }
 
   async confirm(prompt: string): Promise<boolean> {
-    const answer = await this.question(`${prompt} ${dim("[")}${bold("y")}es / ${bold("n")}o${dim("]")} `);
+    const answer = await this.prompt(`${prompt} ${dim("[")}${bold("y")}es / ${bold("n")}o${dim("]")} `);
     return answer !== null && /^y(es)?$/i.test(answer.trim());
   }
 
   /** Resolves null if the run is aborted (Ctrl+C) while waiting for an answer. */
-  private question(prompt: string): Promise<string | null> {
+  prompt(prompt: string): Promise<string | null> {
     const signal = this.signal();
-    if (signal?.aborted) return Promise.resolve(null);
+    if (signal?.aborted || this.closed) return Promise.resolve(null);
     return new Promise((resolve) => {
       const onAbort = () => {
         output.write("\n");

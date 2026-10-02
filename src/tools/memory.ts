@@ -38,7 +38,7 @@ export function createRememberTool(inbox: MemoryInbox) {
       });
       return proposal
         ? `Proposed for memory: "${proposal.fact}". It will be saved only after the user confirms it.`
-        : `Already known or already waiting for confirmation: "${args.fact}".`;
+        : `Already in memory: "${args.fact}".`;
     },
   });
 }

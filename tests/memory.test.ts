@@ -29,7 +29,7 @@ test("proposals wait in the inbox until accepted", () => {
   const { facts, inbox } = setup();
   const p = inbox.propose({ fact: "User is vegetarian.", sessionId: "s1" })!;
   expect(facts.all()).toHaveLength(0);
-  expect(inbox.pending("s1").map((x) => x.fact)).toEqual(["User is vegetarian."]);
+  expect(inbox.pending().map((x) => x.fact)).toEqual(["User is vegetarian."]);
 
   expect(inbox.accept(p.id)?.text).toBe("User is vegetarian.");
   expect(facts.all().map((f) => f.text)).toEqual(["User is vegetarian."]);
@@ -37,15 +37,25 @@ test("proposals wait in the inbox until accepted", () => {
   expect(inbox.accept(p.id)).toBeNull(); // already decided
 });
 
-test("rejected proposals never become facts; duplicates are not proposed twice", () => {
+test("rejected proposals never become facts; known facts are not proposed", () => {
   const { facts, inbox } = setup();
   const p = inbox.propose({ fact: "User hates Mondays" })!;
-  expect(inbox.propose({ fact: "user hates mondays" })).toBeNull();
   expect(inbox.reject(p.id)).toBe(true);
   expect(facts.all()).toHaveLength(0);
 
   facts.add("User likes tea");
   expect(inbox.propose({ fact: "User likes tea" })).toBeNull();
+});
+
+test("re-proposing a waiting fact brings it forward instead of duplicating it", async () => {
+  const { inbox } = setup();
+  const first = inbox.propose({ fact: "User is in Goa", sessionId: "old" })!;
+  await Bun.sleep(5);
+  const since = Date.now();
+  const again = inbox.propose({ fact: "user is in goa", sessionId: "new", untrustedSources: ["web:x"] })!;
+  expect(again.id).toBe(first.id);
+  expect(inbox.pending()).toHaveLength(1);
+  expect(inbox.pending(since)).toMatchObject([{ sessionId: "new", untrustedSources: ["web:x"] }]);
 });
 
 test("expiry carries over to the saved fact", () => {
@@ -96,7 +106,7 @@ test("a memory proposed after reading untrusted content is flagged with its sour
   const session = new Session({ id: "s", systemPrompt: () => "sys" });
   for await (const _ of agent.run(session, "summarize page.txt", new AbortController().signal));
 
-  const [proposal] = inbox.pending("s");
+  const [proposal] = inbox.pending();
   expect(proposal?.fact).toBe("User's bank PIN is 1234");
   expect(proposal?.untrustedSources).toEqual(["file:page.txt"]);
 
