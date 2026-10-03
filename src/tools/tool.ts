@@ -38,6 +38,8 @@ export interface Tool<A = any> {
   schema: z.ZodType<A>;
   /** True if the tool can modify the workspace, so a checkpoint is taken (undo). */
   changesWorkspace: boolean;
+  /** True if it changes other state (memory inbox, reminders); used to verify the model's claims. */
+  changesState?: boolean;
   /** Rule-based risk assessment (no model involved) — see security/risk.ts. */
   assess(args: A, ctx: ToolContext): Risk | Promise<Risk>;
   /** What a plan step's "target" means for this tool, e.g. "file path" (I-2). */

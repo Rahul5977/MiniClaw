@@ -23,6 +23,7 @@ export function createRememberTool(inbox: MemoryInbox) {
         .describe("Only for temporary facts, e.g. 7 for 'this week'"),
     }),
     changesWorkspace: false,
+    changesState: true,
     targetHint: "the fact",
     // Low risk: it only adds to the inbox. Nothing is saved until the user accepts it (I-5).
     assess: () => makeRisk("low", "remember", ["proposes a memory; you confirm before it is saved"]),

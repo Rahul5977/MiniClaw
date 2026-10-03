@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, type AgentEvent } from "../src/agent/agent.ts";
+import { Agent, parseTextToolCall, type AgentEvent } from "../src/agent/agent.ts";
 import { Session } from "../src/agent/session.ts";
 import type { ChatMessage, ChatOptions, LLMProvider, StreamEvent, ToolCall } from "../src/llm/provider.ts";
 import { collect } from "../src/llm/provider.ts";
@@ -211,4 +211,24 @@ test("claims backed by a real change are not flagged", async () => {
   const t = await setup([{ calls: [write("a.md", "x")] }, { text: "I've saved a.md." }], ["approve"]);
   const events = await t.run("save");
   expect(events.some((e) => e.type === "notice")).toBe(false);
+});
+
+test("a reply that is only a JSON tool call is executed as a real call", async () => {
+  const t = await setup([{ text: '```json\n{"name": "write_file", "parameters": {"path": "j.md", "content": "hi"}}\n```' }, { text: "Done." }], ["approve"]);
+  await t.run("write j.md");
+  expect(readFileSync(join(t.workspace, "j.md"), "utf8")).toBe("hi");
+});
+
+test("parseTextToolCall only accepts a whole-reply call to a known tool", () => {
+  const names = ["write_file"];
+  expect(parseTextToolCall('{"name":"write_file","arguments":{"path":"a"}}', names)).toEqual({ name: "write_file", arguments: '{"path":"a"}' });
+  expect(parseTextToolCall('Sure! {"name":"write_file","parameters":{}}', names)).toBeNull();
+  expect(parseTextToolCall('{"name":"rm_everything","parameters":{}}', names)).toBeNull();
+  expect(parseTextToolCall("not json", names)).toBeNull();
+});
+
+test("claims about reminders need a reminder tool to have succeeded", async () => {
+  const t = await setup([{ text: "I called cancel_reminder. The reminder was cancelled." }, { text: "Sorry, nothing was cancelled." }]);
+  const events = await t.run("cancel my gym reminder");
+  expect(events.some((e) => e.type === "notice")).toBe(true);
 });

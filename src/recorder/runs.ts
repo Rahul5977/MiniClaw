@@ -12,6 +12,8 @@ export interface LlmEvent {
   toolCalls: { name: string; arguments: string }[];
   /** Set when MiniClaw added a one-off hint before this step (empty reply, unfinished action…). */
   nudge?: string;
+  /** The model wrote its tool call as a JSON reply; MiniClaw turned it into a real call. */
+  textToolCall?: boolean;
 }
 
 export interface ToolEvent {

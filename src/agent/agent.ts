@@ -62,9 +62,9 @@ const CLAIM_NUDGE =
   "(Note from MiniClaw, not the user: you said you did something, but you did not call any tool, so nothing happened. " +
   "Call the tool now to actually do it, or tell the user it was not done.)";
 
-/** Claims a completed change: "Added to today's journal.", "I've saved the file". */
+/** Claims a completed change: "Added to today's journal.", "I've saved the file", "I called cancel_reminder". */
 const CLAIMS_ACTION =
-  /(^|[.!?\n]\s*)(added|saved|written|appended|stored|recorded) (it |this |that |the entry |them )?(to|in|into)\b|\bI('ve| have)? (just )?(added|saved|written|wrote|created|updated|deleted|removed|appended|stored|recorded)\b|\bhas been (added|saved|written|created|updated|deleted|appended|recorded)\b/i;
+  /(^|[.!?\n]\s*)(added|saved|written|appended|stored|recorded) (it |this |that |the entry |them )?(to|in|into)\b|\bI('ve| have)? (just )?(added|saved|written|wrote|created|updated|deleted|removed|appended|stored|recorded|cancell?ed|called)\b|\b(has|have) been (added|saved|written|created|updated|deleted|appended|recorded|cancell?ed|set)\b|\b(was|were) (successfully )?(added|saved|written|created|updated|deleted|removed|cancell?ed|set)\b/i;
 
 /** Ends by promising an action: "Let's do that now.", "I'll fetch the forecast." */
 const ANNOUNCES_ACTION =
@@ -121,6 +121,18 @@ export class Agent {
             calls = event.calls;
           }
         }
+        // Llama-style models sometimes write the call as the whole reply instead of a real
+        // tool call. Accept it only if the entire reply is one JSON call to an existing tool;
+        // it then goes through the same checks as any other call.
+        let textCall = false;
+        if (calls.length === 0) {
+          const parsed = parseTextToolCall(text, tools.list().map((t) => t.name));
+          if (parsed) {
+            calls = [{ id: `text_${step}`, ...parsed }];
+            text = "";
+            textCall = true;
+          }
+        }
         trace?.llm({
           step,
           promptTokens: messagesTokens(context) + toolSchemaTokens(schemas),
@@ -128,6 +140,7 @@ export class Agent {
           text,
           toolCalls: calls.map((c) => ({ name: c.name, arguments: c.arguments })),
           ...(hint && { nudge: hint }),
+          ...(textCall && { textToolCall: true }),
         });
 
         // Ollama silently drops calls to tools that don't exist, which looks like an
@@ -292,7 +305,7 @@ export class Agent {
     });
     yield { type: "tool_end", callId: call.id, tool: tool.name, verdict, ok, output, changes };
     // `done` is the one-line summary of a successful action, for the daily notes.
-    return { output, done: ok ? summary : undefined, changed: ok && (tool.changesWorkspace || tool.name === "remember") };
+    return { output, done: ok ? summary : undefined, changed: ok && (tool.changesWorkspace || !!tool.changesState) };
   }
 }
 
@@ -310,4 +323,18 @@ export function enforceSkillPermissions(tool: string, risk: Risk, active?: Reado
     reasons: [...risk.reasons, `is outside what the active skill ${names} declared it needs`],
     sessionApprovable: false,
   };
+}
+
+/** `{"name": "write_file", "parameters": {...}}` (optionally in a ```json fence) as the whole reply. */
+export function parseTextToolCall(text: string, toolNames: string[]): { name: string; arguments: string } | null {
+  const body = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  if (!body.startsWith("{") || !body.endsWith("}")) return null;
+  try {
+    const value = JSON.parse(body) as { name?: unknown; parameters?: unknown; arguments?: unknown };
+    const args = value.parameters ?? value.arguments ?? {};
+    if (typeof value.name !== "string" || !toolNames.includes(value.name) || typeof args !== "object" || args === null) return null;
+    return { name: value.name, arguments: JSON.stringify(args) };
+  } catch {
+    return null;
+  }
 }
