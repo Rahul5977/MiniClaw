@@ -598,6 +598,8 @@ export interface Channel {
   approvals by button are covered by automated tests. **WhatsApp Cloud API verified live (3 Oct 2026):** a signed
   webhook through ngrok, a message from the owner's phone answered by qwen2.5:7b in 11 s, using Meta's test number
   (the owner's personal number is only a recipient, so it can't be banned). Live Telegram was tested by the owner.
+  **M5 fully verified on WhatsApp:** a reminder set from the phone was delivered on time, a shell command was approved
+  with reply buttons, and `/panic` blocked it until `/resume`.
 
 ### Phase 6 — Web Dashboard (Week 13)
 - [x] Dashboard on the gateway's HTTP server (Bun, no Express) on `127.0.0.1`, token-protected; also `miniclaw dashboard` alone.
