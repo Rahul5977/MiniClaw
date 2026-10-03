@@ -30,7 +30,7 @@ export class ApprovalPolicy {
     const { risk } = request;
     if (risk.level === "blocked") return "blocked";
     if (risk.level === "low") return "auto";
-    if (risk.level === "medium") {
+    if (risk.level === "medium" && !risk.tainted) {
       if (this.sessionScopes.has(risk.scope)) return "session";
       if (this.planScopes.has(risk.scope)) return "plan";
     }

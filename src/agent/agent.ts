@@ -2,6 +2,7 @@ import type { LLMProvider, ToolCall } from "../llm/provider.ts";
 import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts";
 import type { AuditLog } from "../security/audit.ts";
 import type { Guard } from "../security/guard.ts";
+import { applyTaint, TaintTracker } from "../security/taint.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { DailyNotes } from "../memory/notes.ts";
 import type { RunStatus, RunStore, RunTrace } from "../recorder/runs.ts";
@@ -40,6 +41,8 @@ export interface AgentDeps {
   maxSteps: number;
   /** I-8: flight recorder; when set, every run is saved as a replayable trace. */
   runs?: RunStore;
+  /** I-3: flag calls that reuse text from web pages or files (default on). */
+  taintTracking?: boolean;
   /** I-9: panic lock and daily budgets, checked before any approval. */
   guard?: Guard;
   /** Optional daily log: one line per turn with the request and the actions taken. */
@@ -88,13 +91,10 @@ export class Agent {
     let finished = false;
     let status: RunStatus = "done";
     let failure: string | undefined;
-    const trace = this.deps.runs?.begin({
-      sessionId: session.id,
-      model: llm.model,
-      userText,
-      context: session.context(turn, budget),
-      tools: schemas,
-    });
+    const startContext = session.context(turn, budget);
+    const trace = this.deps.runs?.begin({ sessionId: session.id, model: llm.model, userText, context: startContext, tools: schemas });
+    const taint = this.deps.taintTracking === false ? undefined : new TaintTracker(userText);
+    taint?.addHistory(startContext);
 
     try {
       let nudged = false;
@@ -176,10 +176,11 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills, trace, step };
+          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills, trace, step, taint };
           const { output, done, changed } = yield* this.execute(call, ctx);
           if (changed) changedSomething = true;
           for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
+          taint?.addOutput(output);
           if (done) actions.push(done);
           // One tool result may use at most ~30% of the window, whatever the tool's own cap.
           turn.push({ role: "tool", toolCallId: call.id, content: truncate(output, Math.floor(contextTokens * 0.3 * 3.5)) });
@@ -211,7 +212,7 @@ export class Agent {
 
   private async *execute(
     call: ToolCall,
-    ctx: ToolContext & { signal: AbortSignal; sessionId: string; trace?: RunTrace; step: number },
+    ctx: ToolContext & { signal: AbortSignal; sessionId: string; trace?: RunTrace; step: number; taint?: TaintTracker },
   ): AsyncGenerator<AgentEvent, { output: string; done?: string; changed?: boolean }> {
     const { tools, policy, approver, audit, checkpoints } = this.deps;
     const { signal, sessionId } = ctx;
@@ -235,6 +236,7 @@ export class Agent {
       risk = { level: "blocked", reasons: [(error as Error).message], scope: `${tool.name}:?`, sessionApprovable: false };
     }
     risk = enforceSkillPermissions(tool.name, risk, ctx.activeSkills);
+    if (ctx.taint) risk = applyTaint(risk, ctx.taint.find(tool.name, args));
     if (this.deps.guard) risk = this.deps.guard.check(tool.name, risk);
     yield { type: "tool_start", callId: call.id, tool: tool.name, summary, risk };
 

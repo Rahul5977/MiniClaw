@@ -136,6 +136,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
         notes,
         guard,
         runs,
+        taintTracking: config.security.taintTracking,
         workspace,
         maxSteps: config.agent.maxSteps,
         contextTokens: config.agent.contextTokens,

@@ -27,6 +27,10 @@ export const ConfigSchema = z.object({
     skills: z.string().default("skills"),
     data: z.string().default("data"),
   }).prefault({}),
+  security: z.object({
+    // I-3: flag tool calls that reuse text from web pages or files. Turn off only to measure its effect.
+    taintTracking: z.boolean().default(true),
+  }).prefault({}),
   gateway: z.object({
     // Localhost only by default; expose webhooks with a tunnel (ngrok) instead of opening the port.
     host: z.string().default("127.0.0.1"),

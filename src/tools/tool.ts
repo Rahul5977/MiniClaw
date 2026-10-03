@@ -13,6 +13,8 @@ export interface Risk {
   scope: string;
   /** Whether "allow for the rest of this session" may be offered for this scope. */
   sessionApprovable: boolean;
+  /** I-3: the call reuses untrusted text, so it is never pre-approved (session or plan). */
+  tainted?: boolean;
 }
 
 export interface ToolContext {
