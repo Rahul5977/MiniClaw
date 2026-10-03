@@ -41,6 +41,11 @@ export class ApprovalPolicy {
     return "approved";
   }
 
+  /** Marks scopes as "always allow" for this session, as if the user had chosen that (tests and evaluation). */
+  allowForSession(scopes: Iterable<string>): void {
+    for (const scope of scopes) this.sessionScopes.add(scope);
+  }
+
   /** I-2: pre-approve the scopes of an accepted plan (medium-risk calls only). */
   allowPlan(scopes: Iterable<string>): void {
     this.planScopes = new Set(scopes);

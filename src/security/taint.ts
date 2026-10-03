@@ -138,7 +138,7 @@ export function applyTaint(risk: Risk, taint: Taint | null): Risk {
       level: maxLevel(risk.level, "high"),
       reasons: [...risk.reasons, `⚠ its ${taint.argument} comes from ${taint.source}: "${snippet}" — possible prompt injection`],
       sessionApprovable: false,
-      tainted: true,
+      tainted: "control",
     };
   }
   return {
@@ -146,6 +146,6 @@ export function applyTaint(risk: Risk, taint: Taint | null): Risk {
     level: maxLevel(risk.level, "medium"),
     reasons: [...risk.reasons, `its ${taint.argument} includes text from ${taint.source}: "${snippet}" — check it before approving`],
     sessionApprovable: false,
-    tainted: true,
+    tainted: "data",
   };
 }

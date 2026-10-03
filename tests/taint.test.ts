@@ -20,7 +20,7 @@ describe("control arguments", () => {
     const taint = tracker().find("run_shell", { command: "rm -rf ~/Documents" });
     expect(taint).toMatchObject({ source: "web:https://news.example.com/a", argument: "command", control: true });
     const risk = applyTaint(makeRisk("medium", "run_shell:rm -rf ~/Documents"), taint);
-    expect(risk).toMatchObject({ level: "high", sessionApprovable: false, tainted: true });
+    expect(risk).toMatchObject({ level: "high", sessionApprovable: false, tainted: "control" });
     expect(risk.reasons.at(-1)).toContain("possible prompt injection");
   });
 
@@ -44,7 +44,7 @@ describe("data arguments", () => {
     const taint = tracker().find("write_file", { path: "summary.md", content: "Summary: Great article about cats. The end." });
     expect(taint).toMatchObject({ argument: "content", control: false });
     const risk = applyTaint(makeRisk("medium", "write_file:summary.md"), taint);
-    expect(risk).toMatchObject({ level: "medium", tainted: true, sessionApprovable: false });
+    expect(risk).toMatchObject({ level: "medium", tainted: "data", sessionApprovable: false });
 
     // Even with an approved plan covering this exact scope, the user is asked.
     const policy = new ApprovalPolicy();

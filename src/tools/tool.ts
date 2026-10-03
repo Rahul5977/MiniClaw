@@ -13,8 +13,12 @@ export interface Risk {
   scope: string;
   /** Whether "allow for the rest of this session" may be offered for this scope. */
   sessionApprovable: boolean;
-  /** I-3: the call reuses untrusted text, so it is never pre-approved (session or plan). */
-  tainted?: boolean;
+  /**
+   * I-3: the call reuses untrusted text, so it is never pre-approved (session or plan).
+   * "control": in an argument that decides what happens (strong warning);
+   * "data": in carried content such as file text (a note).
+   */
+  tainted?: "control" | "data";
 }
 
 export interface ToolContext {
@@ -65,6 +69,12 @@ export class ToolRegistry {
 
   register(tool: Tool): void {
     if (this.tools.has(tool.name)) throw new Error(`Tool "${tool.name}" is already registered`);
+    this.tools.set(tool.name, tool);
+  }
+
+  /** Swaps a tool for another with the same name (used by the evaluation's fake web). */
+  replace(tool: Tool): void {
+    if (!this.tools.has(tool.name)) throw new Error(`No tool "${tool.name}" to replace`);
     this.tools.set(tool.name, tool);
   }
 
