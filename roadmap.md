@@ -138,7 +138,7 @@ report a clear **"novel contribution"** chapter with something to measure.
   data; the main model never sees the raw text. (Based on Simon Willison's dual-LLM pattern and
   Google DeepMind's CaMeL paper — cite both.)
 - **Measure:** injection success rate with taint tracking on vs. off, over a suite of 20+ attack pages.
-- **Phase:** 7 (after the tools and injection test suite exist).
+- **Phase:** 7 (after the tools and injection test suite exist). **Status:** implemented (`src/security/taint.ts`) with CaMeL's control/data split: copied text in a control argument (command, URL, path) makes the call high risk with a warning; in a data argument (file content, reminder text) it removes pre-approvals and adds a note. Results in [`eval/RESULTS.md`](eval/RESULTS.md). The dual-LLM mode is future work, and it is what would close the paraphrase blind spot.
 
 ### I-4. Risk-Scored, Explainable Approvals — *Should*
 - A rule-based scorer (no ML needed) rates each call: `low` (read in workspace), `medium` (write, fetch
@@ -606,12 +606,12 @@ export interface Channel {
 - **Milestone M6:** Full system observable and controllable from browser. ✅ Checked in Chrome on real recorded data (login, overview, run timeline, memory, conversations; no console errors).
 
 ### Phase 7 — Hardening, Testing, Evaluation (Week 14–15)
-- [ ] Unit + integration tests (§10), ≥ 70% coverage on `agent/`, `tools/`, `security/`.
-- [ ] Prompt-injection test suite (§11).
-- [ ] 🚀 **I-3 Taint tracking** (+ optional dual-LLM) and its on/off comparison: the headline result.
-- [ ] Run evaluation benchmark across 2–3 models; collect metrics & charts.
-- [ ] README with install guide, screenshots, architecture diagram.
-- **Milestone M7:** Release `v1.0.0`.
+- [x] Unit + integration tests (§10), ≥ 70% coverage on `agent/`, `tools/`, `security/`. **97% lines overall; 95–100% in those folders.**
+- [x] Prompt-injection test suite (§11): 20 attacks + 6 benign tasks, worst-case and live modes; also a regression test.
+- [x] 🚀 **I-3 Taint tracking** and its on/off comparison: worst case **90% → 15%** attacks executed (cautious user). Dual-LLM left as future work.
+- [x] Evaluation benchmark: 30 tasks × 2 runs on qwen2.5:7b (73%) and llama3.1:8b (77%), plus 3 improvement rounds. See [`eval/RESULTS.md`](eval/RESULTS.md).
+- [x] README with install guide, architecture and security-pipeline diagrams. (Screenshots: add your own for the report.)
+- **Milestone M7:** Release `v1.0.0`. ✅
 
 ### Phase 8 — Report & Viva (Week 16)
 - [ ] Final report, PPT, demo video (backup in case live demo fails).
@@ -684,6 +684,10 @@ Material for the evaluation chapter: each failure mode was found in a live run, 
 | F9 | Large API responses | GitHub commits endpoint: 31 KB | `web_fetch` `fields` selection (31 KB → a few hundred characters) |
 | F10 | Stale context in proactive messages | The morning briefing repeated an already-delivered reminder from an old chat turn instead of trusting `list_reminders` | Each briefing starts a fresh conversation |
 | F11 | Skill misfire | For "summarize notes.txt into summary.md", the model first called the `daily-journal` skill, whose "always append" rule then leaked into the summary write. Replaying it 5× gave the misfire 1/5 times | Measured with replay; candidate fixes: sharper skill descriptions, or only exposing skills whose description matches the request |
+| F12 | Typed values sent as strings | llama3.1:8b sent `"append": "false"`, `"fields": "['*']"`; 18 of its 33 calls were rejected | Schema-guided argument repair (booleans, numbers, lists) |
+| F13 | `null` for unused optional arguments | `"in_minutes": null` rejected a reminder | Treat `null` as not given for optional arguments |
+| F14 | Tool calls written as JSON text | Llama 3.1 replied `{"name": "write_file", "parameters": {…}}` | Accept it only when it is the whole reply and names a real tool (then the full pipeline applies) |
+| F15 | Misreading tools | Wrote the literal text `$(cat draft.txt)`; "created a folder" with `write_file`, making a file | Tool descriptions say content is literal and folders need `mkdir` |
 
 Non-model bug found the same way: if input closed while an approval question was open, Bun's readline spun at
 100% CPU forever. Open questions now resolve as "no" when input closes.

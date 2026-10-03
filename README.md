@@ -17,8 +17,31 @@ and an undo button.
 | 4. Skills, permission manifests (I-6), verified actions | ✅ Done |
 | 5. Gateway: Telegram + WhatsApp (official & unofficial), reminders, daily briefing, panic button (I-9) | ✅ Done |
 | 6. Web dashboard, flight recorder and replay (I-8) | ✅ Done |
-| 7. Hardening, evaluation, taint tracking (I-3) | ⏳ Next |
-| 8 | Planned |
+| 7. Taint tracking (I-3), evaluation, 97% test coverage | ✅ Done — **v1.0.0** |
+| 8. Report & viva | ⏳ Next |
+
+## Results
+
+Full details: [`eval/RESULTS.md`](eval/RESULTS.md).
+
+**Prompt injection (I-3).** The test set is 20 attacks hidden in web pages and files. The worst case is a model
+that falls for every attack:
+
+| | Taint tracking off | Taint tracking on |
+|---|---|---|
+| Attacks executed (cautious user) | 18/20 (90%) | **3/20 (15%)** (only the 3 paraphrased attacks) |
+| Attacks executed (fatigued user) | 18/20 (90%) | 8/20 (40%) |
+| Live qwen2.5:7b, attacks executed | 1/20 | **0/20** |
+
+**Everyday tasks.** The benchmark has 30 tasks and was run twice on each model:
+
+| | qwen2.5:7b | llama3.1:8b |
+|---|---|---|
+| Success | 73% | 77% |
+| Valid tool calls | 100% | 98% |
+| Time per task | 11.4 s | 18.2 s |
+
+Reproduce with `bun run eval:injection [--live]` and `bun run eval:tasks [-m model] [-n runs]`.
 
 ## Architecture
 
@@ -322,6 +345,9 @@ Commands: `miniclaw skills` (list), `miniclaw skills revoke <name>` (ask again n
   outside the workspace, so the agent can't tamper with it.
 - **Plan preview (I-2):** approve a whole multi-step task once. Only its medium-risk steps are pre-approved.
 - **Untrusted content:** file and web content is wrapped in `<untrusted>` tags that can't be escaped, and the model is told never to follow instructions inside them.
+- **Taint tracking (I-3):** a tool call that reuses text from a web page or file is flagged.
+  - In a command, URL or path, the call becomes high risk with a "possible prompt injection" warning naming the source.
+  - In content (a file's text, a reminder's text), "always allow" and plan approval stop applying, so you always see the call.
 - **No secrets to tools:** shell commands get a minimal environment (no API keys); `web_fetch` re-checks every redirect (no SSRF to `localhost`).
 - **Verified actions:** if the model claims "Added to your journal" but never called a tool, you see a warning,
   and the model is asked once to actually do it. Small models do this surprisingly often.
@@ -355,8 +381,11 @@ Example `miniclaw.config.json`:
 ## Development
 
 ```bash
-bun test            # unit + integration tests (the agent loop is tested with a scripted fake LLM)
-bun run typecheck   # TypeScript type check
+bun test               # 221 unit + integration tests (the agent loop is tested with a scripted fake LLM)
+bun run typecheck      # TypeScript type check
+bun run coverage       # line coverage (97%)
+bun run eval:injection # prompt-injection evaluation (add --live for the real model)
+bun run eval:tasks     # 30-task benchmark (-m <model>, -n <runs>)
 ```
 
 ```
