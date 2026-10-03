@@ -39,6 +39,8 @@ export interface Runtime {
   workspace: string;
   checkpoints: Checkpoints;
   facts: FactStore;
+  /** IDENTITY.md: the persona, editable in the dashboard. */
+  identityPath: string;
   inbox: MemoryInbox;
   notes: DailyNotes;
   skills: Skill[];
@@ -110,6 +112,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
     workspace,
     checkpoints,
     facts,
+    identityPath,
     inbox,
     notes,
     skills,

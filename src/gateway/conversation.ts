@@ -29,6 +29,7 @@ export interface GatewayControls {
 }
 
 interface PendingQuestion {
+  text: string;
   choices: Choice[];
   resolve: (choiceId: string | null) => void;
 }
@@ -91,6 +92,19 @@ export class Conversation {
     return true;
   }
 
+  /** The question waiting for an answer, if any (shown in the dashboard). */
+  get question(): { text: string; choices: Choice[] } | null {
+    return this.pending ? { text: this.pending.text, choices: this.pending.choices } : null;
+  }
+
+  /** Answers the open question from elsewhere (the dashboard). Returns false if there is none or the choice is unknown. */
+  answerQuestion(choiceId: string): boolean {
+    if (!this.pending?.choices.some((c) => c.id === choiceId)) return false;
+    this.answer(choiceId);
+    void this.reply(`(Answered from the dashboard: ${choiceId})`);
+    return true;
+  }
+
   /** Cancels the running request and any open question. */
   stop(): boolean {
     if (!this.running) return false;
@@ -124,7 +138,7 @@ export class Conversation {
         clearTimeout(timer);
         resolve(choiceId);
       };
-      this.pending = { choices, resolve: finish };
+      this.pending = { text, choices, resolve: finish };
       this.channel.ask(this.chatId, text, choices).catch((error) => {
         console.error(`[${this.channel.name}] could not ask ${this.chatId}: ${(error as Error).message}`);
         this.answer(null);

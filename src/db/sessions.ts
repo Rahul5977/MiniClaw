@@ -16,6 +16,12 @@ export interface SessionInfo {
   updatedAt: number;
 }
 
+export interface SessionListing extends SessionInfo {
+  channel: string;
+  chatId: string | null;
+  turns: number;
+}
+
 /** Conversations in SQLite. A session is a list of turns; each turn is a list of messages. */
 export class SessionStore {
   constructor(private db: Database) {}
@@ -39,6 +45,18 @@ export class SessionStore {
       )
       .get(channel, chatId ?? null);
     return row ? { id: row.id, title: row.title, updatedAt: row.updated_at } : null;
+  }
+
+  /** Most recent sessions first, for the dashboard. */
+  list(limit = 50): SessionListing[] {
+    return this.db
+      .query<{ id: string; channel: string; chat_id: string | null; title: string | null; updated_at: number; turns: number }, [number]>(
+        `SELECT s.id, s.channel, s.chat_id, s.title, s.updated_at,
+                (SELECT COUNT(DISTINCT turn) FROM messages m WHERE m.session_id = s.id) AS turns
+         FROM sessions s ORDER BY s.updated_at DESC, s.rowid DESC LIMIT ?`,
+      )
+      .all(limit)
+      .map((r) => ({ id: r.id, channel: r.channel, chatId: r.chat_id, title: r.title, updatedAt: r.updated_at, turns: r.turns }));
   }
 
   /** Which channel and chat a session belongs to (for delivering reminders). */

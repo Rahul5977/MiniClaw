@@ -17,8 +17,10 @@ export interface GatewayOptions {
   schedulerIntervalMs?: number;
   /** Daily briefing time "HH:MM" (local), and where to remember the last day it was sent. */
   briefing?: { time: string; stateFile: string };
-  /** HTTP server for webhooks (and later the dashboard). Localhost by default; use a tunnel to expose it. */
+  /** HTTP server for webhooks and the dashboard. Localhost by default; use a tunnel to expose webhooks. */
   http?: { host: string; port: number };
+  /** Handles every HTTP request no channel route matched (the dashboard). */
+  fallback?: (request: Request) => Response | Promise<Response>;
 }
 
 /**
@@ -60,14 +62,15 @@ export class Gateway {
       string,
       (request: Request) => Response | Promise<Response>
     >;
-    if (Object.keys(routes).length === 0) return;
+    if (Object.keys(routes).length === 0 && !this.options.fallback) return;
     const { host = "127.0.0.1", port = 8787 } = this.options.http ?? {};
     this.server = Bun.serve({
       hostname: host,
       port,
       fetch: (request) => {
         const route = routes[new URL(request.url).pathname];
-        return route ? route(request) : new Response("Not found", { status: 404 });
+        if (route) return route(request);
+        return this.options.fallback ? this.options.fallback(request) : new Response("Not found", { status: 404 });
       },
     });
     console.log(`[gateway] HTTP server on ${this.url}`);
@@ -89,6 +92,22 @@ export class Gateway {
 
   resume(): void {
     this.runtime.guard.resume();
+  }
+
+  /** Questions waiting for an answer in any chat (for the dashboard). */
+  pendingQuestions(): { key: string; channel: string; chatId: string; text: string; choices: { id: string; label: string }[] }[] {
+    return [...this.conversations].flatMap(([key, c]) => {
+      const q = c.question;
+      return q ? [{ key, channel: key.split(":")[0]!, chatId: c.chatId, ...q }] : [];
+    });
+  }
+
+  answerQuestion(key: string, choiceId: string): boolean {
+    return this.conversations.get(key)?.answerQuestion(choiceId) ?? false;
+  }
+
+  get channelNames(): string[] {
+    return this.channels.map((c) => c.name);
   }
 
   conversation(channel: ChatChannel, chatId: string): Conversation {
