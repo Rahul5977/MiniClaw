@@ -108,10 +108,69 @@ export class ToolRegistry {
     } catch {
       return { ok: false, error: `Arguments for ${name} are not valid JSON: ${rawArgs}. Send a JSON object.` };
     }
-    const result = tool.schema.safeParse(json);
+    let result = tool.schema.safeParse(json);
+    if (!result.success) {
+      // Small models often send typed values as strings ("false", "14", "['a']"); repair
+      // them where the schema expects another type, then validate again.
+      const repaired = repairArguments(json, z.toJSONSchema(tool.schema) as JsonSchema);
+      if (repaired !== json) {
+        const retry = tool.schema.safeParse(repaired);
+        if (retry.success) result = retry;
+      }
+    }
     if (!result.success) {
       return { ok: false, error: `Invalid arguments for ${name}:\n${z.prettifyError(result.error)}` };
     }
     return { ok: true, tool, args: result.data };
   }
+}
+
+interface JsonSchema {
+  type?: string | string[];
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  anyOf?: JsonSchema[];
+}
+
+function expectedType(schema: JsonSchema | undefined): string | undefined {
+  if (!schema) return undefined;
+  if (typeof schema.type === "string") return schema.type;
+  return schema.anyOf?.map(expectedType).find((t) => t && t !== "null");
+}
+
+function parseList(text: string): unknown[] | undefined {
+  for (const candidate of [text, text.replace(/'/g, '"')]) {
+    try {
+      const value = JSON.parse(candidate);
+      if (Array.isArray(value)) return value;
+    } catch {
+      /* try the next form */
+    }
+  }
+  const items = text.split(",").map((s) => s.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+/**
+ * Converts string values to the type the schema expects: "true"/"false" → boolean,
+ * "14" → number, "['a','b']" / "a, b" → array. Returns the input unchanged if nothing applied.
+ */
+export function repairArguments(args: unknown, schema: JsonSchema): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args) || !schema.properties) return args;
+  let changed = false;
+  const out: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(out)) {
+    if (typeof value !== "string") continue;
+    const type = expectedType(schema.properties[key]);
+    const text = value.trim();
+    let fixed: unknown = value;
+    if (type === "boolean" && /^(true|false)$/i.test(text)) fixed = text.toLowerCase() === "true";
+    else if ((type === "number" || type === "integer") && text !== "" && Number.isFinite(Number(text))) fixed = Number(text);
+    else if (type === "array") fixed = parseList(text) ?? value;
+    if (fixed !== value) {
+      out[key] = fixed;
+      changed = true;
+    }
+  }
+  return changed ? out : args;
 }

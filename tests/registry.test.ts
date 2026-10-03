@@ -37,3 +37,24 @@ test("errors explain what went wrong", () => {
 test("duplicate names are rejected", () => {
   expect(() => new ToolRegistry([echo, echo])).toThrow(/already registered/);
 });
+
+test("stringified booleans, numbers and lists are repaired to the schema's types", () => {
+  const typed = defineTool({
+    name: "typed",
+    description: "x",
+    schema: z.object({ flag: z.boolean().default(false), n: z.number().int().optional(), list: z.array(z.string()).optional(), text: z.string() }),
+    changesWorkspace: false,
+    targetHint: "x",
+    assess: () => ({ level: "low", reasons: [], scope: "typed", sessionApprovable: true }),
+    assessTarget: () => ({ level: "low", reasons: [], scope: "typed", sessionApprovable: true }),
+    summarize: () => "typed",
+    run: async () => "",
+  });
+  const registry = new ToolRegistry([typed]);
+  expect(registry.parse("typed", '{"flag":"false","n":"14","list":"[\'*\']","text":"true"}')).toMatchObject({
+    ok: true,
+    args: { flag: false, n: 14, list: ["*"], text: "true" }, // strings stay strings where the schema wants a string
+  });
+  expect(registry.parse("typed", '{"list":"a, b","text":"x"}')).toMatchObject({ ok: true, args: { list: ["a", "b"] } });
+  expect(registry.parse("typed", '{"flag":"maybe","text":"x"}')).toMatchObject({ ok: false });
+});
