@@ -16,8 +16,9 @@ and an undo button.
 | 3. Persistence & memory, memory inbox (I-5) | ✅ Done |
 | 4. Skills, permission manifests (I-6), verified actions | ✅ Done |
 | 5. Gateway: Telegram + WhatsApp (official & unofficial), reminders, daily briefing, panic button (I-9) | ✅ Done |
-| 6. Web dashboard (+ flight recorder, I-8) | ⏳ Next |
-| 7–8 | Planned |
+| 6. Web dashboard, flight recorder and replay (I-8) | ✅ Done |
+| 7. Hardening, evaluation, taint tracking (I-3) | ⏳ Next |
+| 8 | Planned |
 
 ## Quick start
 
@@ -172,6 +173,48 @@ Send a normal message to talk. Commands: `/help`, `/new`, `/stop`, `/undo [n]`, 
   This also works from the terminal. Daily budgets cap risky tools (defaults: 30 shell commands, 60 web fetches and
   60 file writes per day; change them with `agent.budgets`).
 
+## Dashboard
+
+`bun run gateway` prints a login link such as `📊 Dashboard: http://127.0.0.1:8787/?token=…`. Without chat apps,
+use `bun run dashboard`.
+
+| Page | What you can do |
+|---|---|
+| Overview | Pause state, today's action budgets, counts, recent runs; **Panic / Resume** in the top bar |
+| Approvals | Answer approval questions waiting in any chat from your laptop (needs the gateway) |
+| Flight recorder | Every agent run as a step-by-step timeline: model steps, tool calls with risk, verdict, arguments and results |
+| Conversations | Every chat (terminal, Telegram, WhatsApp) as a transcript |
+| Memory | Review proposed memories, forget facts, edit `MEMORY.md` and `IDENTITY.md` |
+| Skills, Reminders, Audit log | Permissions and consent, upcoming reminders, every tool call |
+
+**Security:**
+- **Localhost only:** requests for any other host are refused, so the dashboard also can't be reached through the ngrok tunnel.
+- **Login:** the link's secret token becomes an HttpOnly, SameSite=Strict cookie, and the token is removed from the URL.
+- **Writes:** every change needs a custom header that other websites can't send (CSRF protection).
+- **Untrusted text:** the page is built with DOM methods only, never `innerHTML`, under a strict Content Security Policy.
+
+## Flight recorder & replay (I-8)
+
+Every agent run is recorded in SQLite. It stores the starting context, every model step (text, tool calls,
+estimated tokens, time), every tool call and any nudges MiniClaw added.
+
+```bash
+bun src/index.ts runs                                   # recent runs
+bun src/index.ts replay <run-id> --model llama3.1:8b    # same situation, another model
+bun src/index.ts replay <run-id> --times 5              # how consistent is the model?
+```
+
+**Replay never executes tools.** When the model makes a call the recording also made (same arguments, or the same
+target such as the same file path), it gets the recorded result. Any other call ends the replay as *diverged*.
+Possible outcomes: `matched`, `matched_targets`, `fewer_calls`, `diverged`, `step_limit`. This is the
+evaluation harness for comparing models.
+
+```
+5 replays with qwen2.5:7b (avg 8.3s):
+  fewer_calls        4  80%
+  diverged           1  20%
+```
+
 ## Skills
 
 A skill is a folder with a `SKILL.md`: instructions for a task plus the permissions it needs. Drop a folder into
@@ -267,6 +310,8 @@ src/
 ├── gateway/               # Gateway (routing, reminders, briefing), Conversation (per chat), channel config
 ├── scheduler/             # reminders store and scheduler
 ├── runtime.ts             # shared wiring for the CLI and the gateway
+├── dashboard/             # dashboard API (server.ts) and UI (public/)
+├── recorder/              # flight recorder (runs.ts) and replay (replay.ts)
 ├── db/                    # SQLite: migrations, session store
 ├── memory/                # MEMORY.md facts, inbox (I-5), IDENTITY.md, daily notes
 ├── llm/                   # provider interface + OpenAI-compatible client (streaming tool calls)

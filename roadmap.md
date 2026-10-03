@@ -179,7 +179,9 @@ report a clear **"novel contribution"** chapter with something to measure.
 - Every agent run is saved as a trace: prompt, model output, tool calls, timings, tokens.
 - Dashboard timeline lets you step through a run, and `miniclaw replay <id>` re-runs it against another
   model. This is the same harness you use for the evaluation in §10.2.
-- **Phase:** 6–7.
+- **Phase:** 6–7. **Status:** implemented (`src/recorder/`). Replay never executes tools: matching calls get the recorded
+  result (exact, or the same target with different content), and any other call ends the replay as "diverged".
+  Because models are not deterministic, `--times N` tallies outcomes; this gives a consistency metric for §10.2.
 
 ### I-9. Panic Button & Action Budgets — *Could*
 - `/panic` (Telegram or CLI) immediately cancels running tools, pauses the scheduler and locks
@@ -596,10 +598,12 @@ export interface Channel {
   approvals by button are covered by automated tests. Still to do with real accounts: the live Telegram and WhatsApp runs.
 
 ### Phase 6 — Web Dashboard (Week 13)
-- [ ] Express server on `127.0.0.1`, token-protected.
-- [ ] Pages: Sessions/Chat, Memory editor, Skills, Audit log, Pending approvals.
-- [ ] 🚀 **I-8 Flight recorder** timeline view of each agent run.
-- **Milestone M6:** Full system observable and controllable from browser.
+- [x] Dashboard on the gateway's HTTP server (Bun, no Express) on `127.0.0.1`, token-protected; also `miniclaw dashboard` alone.
+  Security: Host check (DNS rebinding, ngrok), HttpOnly SameSite=Strict cookie, CSRF header, strict CSP, no `innerHTML`.
+- [x] Pages: Overview, Conversations, Memory (inbox, facts, `MEMORY.md`/`IDENTITY.md` editors), Skills, Reminders, Audit log, **live Approvals**.
+- [x] 🚀 **I-8 Flight recorder:** every run recorded; timeline view of each run.
+- [x] 🚀 **I-8 Replay:** `miniclaw replay <run> -m <model> -n <times>`, side-effect free, outcome tally.
+- **Milestone M6:** Full system observable and controllable from browser. ✅ Checked in Chrome on real recorded data (login, overview, run timeline, memory, conversations; no console errors).
 
 ### Phase 7 — Hardening, Testing, Evaluation (Week 14–15)
 - [ ] Unit + integration tests (§10), ≥ 70% coverage on `agent/`, `tools/`, `security/`.
@@ -657,6 +661,7 @@ Build a set of **30–50 tasks** (e.g. "create a file", "find X in a webpage", "
 | Recoverability (I-1) | % destructive scenarios fully reverted by `/undo` |
 | Approval load (I-2, I-4) | approval prompts per task vs. ask-every-time baseline |
 | Taint effectiveness (I-3) | injection success rate with taint tracking on vs. off |
+| Consistency (I-8) | share of `replay --times N` outcomes that match the recorded actions, per model |
 
 Present as tables + bar charts in the report.
 
@@ -678,6 +683,7 @@ Material for the evaluation chapter: each failure mode was found in a live run, 
 | F8 | Follows injected instructions? | A file told the AI to remember a fake fact | The model refused (untrusted-content rule); the memory inbox + ⚠ provenance warning is a second layer |
 | F9 | Large API responses | GitHub commits endpoint: 31 KB | `web_fetch` `fields` selection (31 KB → a few hundred characters) |
 | F10 | Stale context in proactive messages | The morning briefing repeated an already-delivered reminder from an old chat turn instead of trusting `list_reminders` | Each briefing starts a fresh conversation |
+| F11 | Skill misfire | For "summarize notes.txt into summary.md", the model first called the `daily-journal` skill, whose "always append" rule then leaked into the summary write. Replaying it 5× gave the misfire 1/5 times | Measured with replay; candidate fixes: sharper skill descriptions, or only exposing skills whose description matches the request |
 
 Non-model bug found the same way: if input closed while an approval question was open, Bun's readline spun at
 100% CPU forever. Open questions now resolve as "no" when input closes.
