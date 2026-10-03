@@ -14,7 +14,10 @@
     "typecheck": "tsc",
     "test": "bun test",
     "gateway": "bun src/index.ts gateway",
-    "dashboard": "bun src/index.ts dashboard"
+    "dashboard": "bun src/index.ts dashboard",
+    "coverage": "bun test --coverage",
+    "eval:injection": "bun eval/injection/run.ts",
+    "eval:tasks": "bun eval/tasks/run.ts"
   },
   "keywords": [],
   "author": "Rahul Raj",
