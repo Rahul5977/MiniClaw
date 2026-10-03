@@ -9,6 +9,9 @@ import { runDoctor } from "./doctor.ts";
 import { buildChannels } from "./gateway/channels.ts";
 import { Gateway } from "./gateway/gateway.ts";
 import { OpenAICompatibleProvider } from "./llm/openaiCompatible.ts";
+import { formatReplay, formatRuns, formatTally } from "./recorder/format.ts";
+import { replayRun } from "./recorder/replay.ts";
+import { RunStore } from "./recorder/runs.ts";
 import { SkillGrants } from "./skills/grants.ts";
 import { loadSkills } from "./skills/loader.ts";
 import { createRuntime } from "./runtime.ts";
@@ -73,6 +76,39 @@ program
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+  });
+
+program
+  .command("runs")
+  .description("List recent agent runs from the flight recorder")
+  .option("-n, --limit <n>", "how many", "20")
+  .action((options: { limit: string }) => {
+    const config = loadConfig();
+    const runs = new RunStore(openDatabase(join(config.paths.data, "miniclaw.db")));
+    console.log(formatRuns(runs.list(Number(options.limit) || 20)));
+  });
+
+program
+  .command("replay <runId>")
+  .description("Re-run a recorded run with another model, without executing any tools")
+  .option("-m, --model <name>", "model to replay with (default: from config)")
+  .option("-n, --times <n>", "replay several times and tally the outcomes (models are not deterministic)", "1")
+  .option("--json", "print the full result(s) as JSON")
+  .action(async (runId: string, options: { model?: string; times: string; json?: boolean }) => {
+    const config = loadConfig({ model: options.model });
+    const run = new RunStore(openDatabase(join(config.paths.data, "miniclaw.db"))).get(runId);
+    if (!run) throw new Error(`No run ${runId}. See \`miniclaw runs\`.`);
+    const llm = new OpenAICompatibleProvider(config.llm);
+    const times = Math.max(1, Number(options.times) || 1);
+    const results = [];
+    for (let i = 0; i < times; i++) {
+      const result = await replayRun(run, llm);
+      results.push(result);
+      if (!options.json && times === 1) console.log(formatReplay(result));
+      else if (!options.json) console.log(`replay ${i + 1}/${times}: ${result.outcome} (${(result.durationMs / 1000).toFixed(1)}s)`);
+    }
+    if (options.json) console.log(JSON.stringify(times === 1 ? results[0] : results, null, 2));
+    else if (times > 1) console.log(`\n${formatTally(results)}`);
   });
 
 const skillsCommand = program.command("skills").description("List installed skills and their permissions");
