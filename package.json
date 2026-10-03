@@ -13,7 +13,8 @@
     "doctor": "bun src/index.ts doctor",
     "typecheck": "tsc",
     "test": "bun test",
-    "gateway": "bun src/index.ts gateway"
+    "gateway": "bun src/index.ts gateway",
+    "dashboard": "bun src/index.ts dashboard"
   },
   "keywords": [],
   "author": "Rahul Raj",

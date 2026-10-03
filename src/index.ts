@@ -6,6 +6,7 @@ import { formatSkills } from "./channels/skillsView.ts";
 import { loadConfig } from "./config.ts";
 import { openDatabase } from "./db/database.ts";
 import { runDoctor } from "./doctor.ts";
+import { createDashboard, dashboardLink } from "./dashboard/server.ts";
 import { buildChannels } from "./gateway/channels.ts";
 import { Gateway } from "./gateway/gateway.ts";
 import { OpenAICompatibleProvider } from "./llm/openaiCompatible.ts";
@@ -55,7 +56,9 @@ program
 
     const llm = new OpenAICompatibleProvider(config.llm);
     const runtime = await createRuntime(config, llm);
-    const gateway = new Gateway(runtime, channels, {
+    let dashboard: ReturnType<typeof createDashboard> | undefined;
+    const gateway: Gateway = new Gateway(runtime, channels, {
+      fallback: (request) => dashboard!.handle(request),
       defaultChat: config.gateway.defaultChat,
       answerTimeoutMs: config.gateway.answerTimeoutMinutes * 60_000,
       http: { host: config.gateway.host, port: config.gateway.port },
@@ -63,10 +66,12 @@ program
         briefing: { time: config.gateway.briefingTime, stateFile: join(config.paths.data, "last-briefing") },
       }),
     });
+    dashboard = createDashboard({ runtime, gateway, tokenFile: join(config.paths.data, "dashboard-token") });
     await gateway.start();
     console.log(`🦀 ${config.agent.name} gateway running · model ${llm.model} · channels: ${channels.map((c) => c.name).join(", ")}`);
     if (runtime.guard.paused) console.log(`⛔ ${runtime.guard.pausedInfo()} — send /resume from a chat to continue.`);
     if (config.gateway.briefingTime) console.log(`☀️ Daily briefing at ${config.gateway.briefingTime}`);
+    console.log(`📊 Dashboard: ${dashboardLink(config.gateway.host, config.gateway.port, dashboard.token)}`);
     console.log("Press Ctrl+C to stop.");
 
     const shutdown = async () => {
@@ -76,6 +81,24 @@ program
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+  });
+
+program
+  .command("dashboard")
+  .description("Open the web dashboard without running chat apps (the gateway also serves it)")
+  .option("-p, --port <port>", "port (default: gateway.port)")
+  .action(async (options: { port?: string }) => {
+    const config = loadConfig();
+    const runtime = await createRuntime(config, new OpenAICompatibleProvider(config.llm));
+    const dashboard = createDashboard({ runtime, tokenFile: join(config.paths.data, "dashboard-token") });
+    const port = options.port ? Number(options.port) : config.gateway.port;
+    try {
+      Bun.serve({ hostname: config.gateway.host, port, fetch: (request) => dashboard.handle(request) });
+    } catch {
+      throw new Error(`Port ${port} is in use. If \`miniclaw gateway\` is running, it already serves the dashboard; otherwise use --port.`);
+    }
+    console.log(`📊 MiniClaw dashboard: ${dashboardLink(config.gateway.host, port, dashboard.token)}`);
+    console.log("Live approvals need `miniclaw gateway`. Press Ctrl+C to stop.");
   });
 
 program

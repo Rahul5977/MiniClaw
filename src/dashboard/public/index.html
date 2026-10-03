@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiniClaw dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🦀 <span id="agent-name">MiniClaw</span> <span class="muted" id="model"></span></div>
+    <div class="topbar-actions">
+      <span class="pill" id="status-pill">…</span>
+      <button class="danger" id="panic-button" type="button">Panic</button>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="sidebar" aria-label="Sections">
+      <a href="#/overview" data-page="overview">Overview</a>
+      <a href="#/approvals" data-page="approvals">Approvals <span class="badge hidden" id="approvals-badge"></span></a>
+      <a href="#/runs" data-page="runs">Flight recorder</a>
+      <a href="#/sessions" data-page="sessions">Conversations</a>
+      <a href="#/memory" data-page="memory">Memory <span class="badge hidden" id="inbox-badge"></span></a>
+      <a href="#/skills" data-page="skills">Skills</a>
+      <a href="#/reminders" data-page="reminders">Reminders</a>
+      <a href="#/audit" data-page="audit">Audit log</a>
+    </nav>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <div class="toast hidden" id="toast" role="status"></div>
+</body>
+</html>
