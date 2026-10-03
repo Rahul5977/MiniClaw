@@ -204,3 +204,6 @@ dist
 /data/
 /workspace/
 /miniclaw.config.json
+
+# Demo recordings
+/demo/out/
