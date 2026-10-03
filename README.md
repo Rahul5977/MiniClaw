@@ -233,6 +233,23 @@ everyone else is ignored silently.
 The free ngrok URL changes on every restart (update the callback URL). For longer than 24 hours, create a
 permanent token with a System User in Meta Business Settings.
 
+**Keeping your number safe:**
+- Only add your number under **"To"** (a recipient).
+- Skip **Step 2 "Register your WhatsApp phone number"**: it would move that number off the normal WhatsApp app.
+- Skip business verification and "Become a Tech Provider"; neither is needed for the test number.
+
+**Troubleshooting:**
+- **Where the webhook settings are:** in Meta's newer layout they're under **WhatsApp use case → Step 2. Production
+  setup → Configure Webhooks**. Do only the webhook part on that page.
+- **The webhook verifies but your messages never arrive** (no `POST` in ngrok's log at `http://127.0.0.1:4040`):
+  the app isn't subscribed to the WhatsApp Business account. Fix it once with:
+  ```bash
+  curl -X POST -H "Authorization: Bearer $WHATSAPP_TOKEN" \
+    https://graph.facebook.com/v26.0/<WHATSAPP_BUSINESS_ACCOUNT_ID>/subscribed_apps
+  ```
+  Also make sure the **messages** webhook field is subscribed.
+- **Old Graph API versions get switched off.** MiniClaw uses v26.0; change `channels.whatsapp.apiBase` when Meta retires it.
+
 ### WhatsApp: unofficial (Baileys)
 
 > ⚠️ This links MiniClaw like WhatsApp Web. It breaks WhatsApp's terms of service and the number can be

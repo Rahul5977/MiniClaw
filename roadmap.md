@@ -595,7 +595,9 @@ export interface Channel {
 - [x] 🚀 **I-9** `/panic`, `/resume`, daily action budgets.
 - **Milestone M5:** Set reminder from phone → receive it on time → approve a shell command from phone.
   ✅ Verified end to end with qwen2.5:7b against a **fake** Telegram API (reminder set by chat, listed, delivered on time);
-  approvals by button are covered by automated tests. Still to do with real accounts: the live Telegram and WhatsApp runs.
+  approvals by button are covered by automated tests. **WhatsApp Cloud API verified live (3 Oct 2026):** a signed
+  webhook through ngrok, a message from the owner's phone answered by qwen2.5:7b in 11 s, using Meta's test number
+  (the owner's personal number is only a recipient, so it can't be banned). Live Telegram was tested by the owner.
 
 ### Phase 6 — Web Dashboard (Week 13)
 - [x] Dashboard on the gateway's HTTP server (Bun, no Express) on `127.0.0.1`, token-protected; also `miniclaw dashboard` alone.
