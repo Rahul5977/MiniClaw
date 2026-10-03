@@ -20,6 +20,70 @@ and an undo button.
 | 7. Hardening, evaluation, taint tracking (I-3) | ⏳ Next |
 | 8 | Planned |
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Channels
+        CLI[Terminal<br/>miniclaw chat]
+        TG[Telegram]
+        WAC[WhatsApp<br/>Cloud API]
+        WAW[WhatsApp Web<br/>Baileys]
+        DASH[Web dashboard]
+    end
+
+    subgraph Gateway["Gateway (miniclaw gateway)"]
+        CONV[Conversation per chat<br/>approvals as buttons]
+        SCHED[Scheduler<br/>reminders, briefing]
+        HTTP[HTTP server<br/>webhooks + dashboard]
+    end
+
+    subgraph Core["Shared runtime"]
+        AGENT[Agent loop<br/>ReAct + nudges]
+        PIPE[Security pipeline]
+        TOOLS[Tools + skills]
+        REC[Flight recorder]
+    end
+
+    subgraph Storage
+        DB[(SQLite<br/>sessions, audit, runs,<br/>inbox, reminders)]
+        MD[[MEMORY.md, IDENTITY.md,<br/>daily notes]]
+        WS[[workspace/ + git checkpoints]]
+    end
+
+    LLM[(Ollama<br/>qwen2.5:7b)]
+
+    CLI --> AGENT
+    TG & WAC & WAW --> CONV --> AGENT
+    DASH --> HTTP
+    WAC -.->|webhook| HTTP
+    SCHED --> CONV
+    AGENT <--> LLM
+    AGENT --> PIPE --> TOOLS
+    AGENT --> REC --> DB
+    TOOLS --> WS & MD & DB
+```
+
+Every tool call the model makes goes through the same pipeline, in this order:
+
+```mermaid
+flowchart TD
+    A[Model asks for a tool call] --> B{Valid tool and JSON args?}
+    B -->|no| B2[Error back to the model so it can fix the call]
+    B -->|yes| C[Risk rules I-4<br/>low / medium / high / blocked + reasons]
+    C --> D[Skill permissions I-6<br/>outside the active skill's manifest → high]
+    D --> E[Taint tracking I-3<br/>text copied from web/files → high, or no pre-approval]
+    E --> F[Guard I-9<br/>panic → block, daily budget → block]
+    F --> G{Approval policy}
+    G -->|low| H[Run]
+    G -->|"medium, allowed this session or by an approved plan (I-2)"| H
+    G -->|medium / high| Q[Ask the user<br/>with reasons and a diff]
+    Q -->|yes| H
+    Q -->|no / timeout| X[Refused: the model is told not to retry]
+    G -->|blocked| X
+    H --> I[Checkpoint I-1 · audit log · flight recorder I-8]
+```
+
 ## Quick start
 
 Requirements: [Bun](https://bun.sh) ≥ 1.1, [pnpm](https://pnpm.io), [Ollama](https://ollama.com), git.
