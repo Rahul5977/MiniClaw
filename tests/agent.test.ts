@@ -232,3 +232,8 @@ test("claims about reminders need a reminder tool to have succeeded", async () =
   const events = await t.run("cancel my gym reminder");
   expect(events.some((e) => e.type === "notice")).toBe(true);
 });
+
+test("\"I've set a reminder\" without a successful reminder call is flagged", async () => {
+  const t = await setup([{ text: "I've set a reminder for you at 09:00." }, { text: "Sorry, I did not set it." }]);
+  expect((await t.run("remind me at 9")).some((e) => e.type === "notice")).toBe(true);
+});

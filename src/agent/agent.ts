@@ -64,7 +64,7 @@ const CLAIM_NUDGE =
 
 /** Claims a completed change: "Added to today's journal.", "I've saved the file", "I called cancel_reminder". */
 const CLAIMS_ACTION =
-  /(^|[.!?\n]\s*)(added|saved|written|appended|stored|recorded) (it |this |that |the entry |them )?(to|in|into)\b|\bI('ve| have)? (just )?(added|saved|written|wrote|created|updated|deleted|removed|appended|stored|recorded|cancell?ed|called)\b|\b(has|have) been (added|saved|written|created|updated|deleted|appended|recorded|cancell?ed|set)\b|\b(was|were) (successfully )?(added|saved|written|created|updated|deleted|removed|cancell?ed|set)\b/i;
+  /(^|[.!?\n]\s*)(added|saved|written|appended|stored|recorded) (it |this |that |the entry |them )?(to|in|into)\b|\bI('ve| have)? (just )?(added|saved|written|wrote|created|updated|deleted|removed|appended|stored|recorded|cancell?ed|called|set)\b|\b(has|have) been (added|saved|written|created|updated|deleted|appended|recorded|cancell?ed|set)\b|\b(was|were) (successfully )?(added|saved|written|created|updated|deleted|removed|cancell?ed|set)\b/i;
 
 /** Ends by promising an action: "Let's do that now.", "I'll fetch the forecast." */
 const ANNOUNCES_ACTION =

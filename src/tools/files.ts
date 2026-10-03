@@ -87,7 +87,9 @@ export const listDirTool = defineTool({
 
 export const writeFileTool = defineTool({
   name: "write_file",
-  description: "Create or overwrite a text file in the workspace, or append to it. Parent folders are created.",
+  description:
+    "Create or overwrite a text file in the workspace, or append to it. Parent folders are created automatically. " +
+    "The content is written exactly as given (no shell expansion). To create an empty folder, use run_shell with mkdir.",
   schema: z.object({
     path: z.string().describe("File path relative to the workspace"),
     content: z.string().describe("Text to write"),

@@ -161,7 +161,14 @@ export function repairArguments(args: unknown, schema: JsonSchema): unknown {
   if (!args || typeof args !== "object" || Array.isArray(args) || !schema.properties) return args;
   let changed = false;
   const out: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+  const required = new Set((schema as { required?: string[] }).required ?? []);
   for (const [key, value] of Object.entries(out)) {
+    // Small models send null for optional arguments they don't use; treat it as "not given".
+    if (value === null && !required.has(key)) {
+      delete out[key];
+      changed = true;
+      continue;
+    }
     if (typeof value !== "string") continue;
     const type = expectedType(schema.properties[key]);
     const text = value.trim();

@@ -15,8 +15,11 @@ export function createReminderTools(store: ReminderStore) {
     schema: z.object({
       text: z.string().min(1).max(300).describe("What to remind the user about"),
       in_minutes: z.number().int().min(1).max(60 * 24 * 365).optional(),
-      at: z.string().optional().describe('"HH:MM" or "YYYY-MM-DD HH:MM", local time'),
-      repeat: z.enum(["daily", "weekly"]).optional().describe("Only for repeating reminders"),
+      at: z.string().optional().describe('"HH:MM" (today, or tomorrow if passed) or "YYYY-MM-DD HH:MM" for another day; local time'),
+      repeat: z
+        .enum(["daily", "weekly"])
+        .optional()
+        .describe('Set "daily" when the user says every day, "weekly" for every week; leave out for a one-time reminder'),
     }),
     changesWorkspace: false,
     changesState: true,

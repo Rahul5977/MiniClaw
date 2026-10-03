@@ -57,4 +57,6 @@ test("stringified booleans, numbers and lists are repaired to the schema's types
   });
   expect(registry.parse("typed", '{"list":"a, b","text":"x"}')).toMatchObject({ ok: true, args: { list: ["a", "b"] } });
   expect(registry.parse("typed", '{"flag":"maybe","text":"x"}')).toMatchObject({ ok: false });
+  expect(registry.parse("typed", '{"n":null,"text":"x"}')).toMatchObject({ ok: true, args: { text: "x" } });
+  expect(registry.parse("typed", '{"text":null}')).toMatchObject({ ok: false }); // required stays required
 });
