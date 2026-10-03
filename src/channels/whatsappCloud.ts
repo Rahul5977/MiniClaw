@@ -115,7 +115,7 @@ export class WhatsAppCloudChannel implements ChatChannel {
   }
 
   private async post(body: Record<string, unknown>): Promise<void> {
-    const base = this.options.apiBase ?? "https://graph.facebook.com/v21.0";
+    const base = this.options.apiBase ?? "https://graph.facebook.com/v26.0";
     const res = await fetch(`${base}/${this.options.phoneNumberId}/messages`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },

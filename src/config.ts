@@ -57,7 +57,7 @@ export const ConfigSchema = z.object({
       appSecret: z.string().optional(),
       verifyToken: z.string().optional(),
       allowedNumbers: z.array(z.coerce.string()).default([]),
-      apiBase: z.url().default("https://graph.facebook.com/v21.0"),
+      apiBase: z.url().default("https://graph.facebook.com/v26.0"),
     }).prefault({}),
     // Unofficial (Baileys). Never enabled automatically because the number can be banned.
     whatsappWeb: z.object({
