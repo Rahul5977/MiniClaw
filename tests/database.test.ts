@@ -4,8 +4,8 @@ import { openDatabase } from "../src/db/database.ts";
 test("migrations create the schema and set the version", () => {
   const db = openDatabase(":memory:");
   const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
-  expect(tables.map((t) => t.name)).toEqual(expect.arrayContaining(["audit_log", "memory_inbox", "messages", "reminders", "sessions", "skill_grants"]));
-  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(3);
+  expect(tables.map((t) => t.name)).toEqual(expect.arrayContaining(["audit_log", "memory_inbox", "messages", "reminders", "run_events", "runs", "sessions", "skill_grants"]));
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
 });
 
 test("deleting a session deletes its messages", () => {

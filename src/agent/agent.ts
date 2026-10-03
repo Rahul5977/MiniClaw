@@ -4,12 +4,13 @@ import type { AuditLog } from "../security/audit.ts";
 import type { Guard } from "../security/guard.ts";
 import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { DailyNotes } from "../memory/notes.ts";
+import type { RunStatus, RunStore, RunTrace } from "../recorder/runs.ts";
 import { maxLevel } from "../security/risk.ts";
 import { permits, type Permission } from "../skills/permissions.ts";
 import type { Checkpoints } from "../workspace/checkpoints.ts";
 import { truncate } from "../tools/format.ts";
 import type { Session, TurnMessage } from "./session.ts";
-import { toolSchemaTokens } from "./tokens.ts";
+import { messagesTokens, toolSchemaTokens } from "./tokens.ts";
 
 export type AgentEvent =
   | { type: "text"; delta: string }
@@ -37,6 +38,8 @@ export interface AgentDeps {
   checkpoints: Checkpoints;
   workspace: string;
   maxSteps: number;
+  /** I-8: flight recorder; when set, every run is saved as a replayable trace. */
+  runs?: RunStore;
   /** I-9: panic lock and daily budgets, checked before any approval. */
   guard?: Guard;
   /** Optional daily log: one line per turn with the request and the actions taken. */
@@ -83,6 +86,15 @@ export class Agent {
     // Messages up to this index form a valid conversation (no tool call without its result).
     let consistent = 1;
     let finished = false;
+    let status: RunStatus = "done";
+    let failure: string | undefined;
+    const trace = this.deps.runs?.begin({
+      sessionId: session.id,
+      model: llm.model,
+      userText,
+      context: session.context(turn, budget),
+      tools: schemas,
+    });
 
     try {
       let nudged = false;
@@ -95,10 +107,12 @@ export class Agent {
         let calls: ToolCall[] = [];
         const context = session.context(turn, budget);
         // One-off hint after an empty reply; never saved to the conversation.
+        let hint: string | undefined;
         if (nudged) {
-          const hint = challenged && !announced ? CLAIM_NUDGE : NUDGE(tools.list().map((t) => t.name));
+          hint = challenged && !announced ? CLAIM_NUDGE : NUDGE(tools.list().map((t) => t.name));
           context.push({ role: "user", content: hint });
         }
+        const stepStarted = performance.now();
         for await (const event of llm.stream(context, { tools: schemas, signal })) {
           if (event.type === "text") {
             text += event.delta;
@@ -107,6 +121,14 @@ export class Agent {
             calls = event.calls;
           }
         }
+        trace?.llm({
+          step,
+          promptTokens: messagesTokens(context) + toolSchemaTokens(schemas),
+          durationMs: Math.round(performance.now() - stepStarted),
+          text,
+          toolCalls: calls.map((c) => ({ name: c.name, arguments: c.arguments })),
+          ...(hint && { nudge: hint }),
+        });
 
         // Ollama silently drops calls to tools that don't exist, which looks like an
         // empty reply. Retry once with a hint instead of showing the user nothing.
@@ -129,10 +151,14 @@ export class Agent {
           if (!challenged) {
             challenged = true;
             nudged = true;
-            yield { type: "notice", message: "The model said it did something, but no tool was called, so nothing happened yet. Asking it to actually do it…" };
+            const message = "The model said it did something, but no tool was called, so nothing happened yet. Asking it to actually do it…";
+            trace?.notice(message);
+            yield { type: "notice", message };
             continue;
           }
-          yield { type: "notice", message: "No tool was called, so nothing was actually saved or changed." };
+          const message = "No tool was called, so nothing was actually saved or changed.";
+          trace?.notice(message);
+          yield { type: "notice", message };
         }
         nudged = false;
 
@@ -150,7 +176,7 @@ export class Agent {
         turn.push({ role: "assistant", content: text, toolCalls: calls });
         for (const call of calls) {
           signal.throwIfAborted();
-          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills };
+          const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills, trace, step };
           const { output, done, changed } = yield* this.execute(call, ctx);
           if (changed) changedSomething = true;
           for (const match of output.matchAll(/<untrusted source="([^"]+)">/g)) untrusted.add(match[1]!);
@@ -166,7 +192,14 @@ export class Agent {
       turn.push({ role: "assistant", content: note });
       consistent = turn.length;
       finished = true;
+      status = "step_limit";
+    } catch (error) {
+      status = signal.aborted ? "stopped" : "error";
+      failure = (error as Error).message;
+      throw error;
     } finally {
+      if (!finished && status === "done") status = "stopped"; // e.g. the caller stopped iterating
+      trace?.finish(status, failure);
       // Always leave the session valid, even after Ctrl+C or an error mid-step.
       const kept = turn.slice(0, consistent);
       if (!finished) kept.push({ role: "assistant", content: STOPPED });
@@ -176,7 +209,10 @@ export class Agent {
     }
   }
 
-  private async *execute(call: ToolCall, ctx: ToolContext & { signal: AbortSignal; sessionId: string }): AsyncGenerator<AgentEvent, { output: string; done?: string; changed?: boolean }> {
+  private async *execute(
+    call: ToolCall,
+    ctx: ToolContext & { signal: AbortSignal; sessionId: string; trace?: RunTrace; step: number },
+  ): AsyncGenerator<AgentEvent, { output: string; done?: string; changed?: boolean }> {
     const { tools, policy, approver, audit, checkpoints } = this.deps;
     const { signal, sessionId } = ctx;
 
@@ -184,6 +220,7 @@ export class Agent {
     if (!parsed.ok) {
       // Tell the model what was wrong so it can fix the call on the next step.
       const output = `Error: ${parsed.error}`;
+      ctx.trace?.tool({ step: ctx.step, name: call.name, arguments: call.arguments, verdict: "invalid", ok: false, durationMs: 0, output });
       yield { type: "tool_end", callId: call.id, tool: call.name, verdict: "invalid", ok: false, output, changes: [] };
       return { output };
     }
@@ -237,6 +274,19 @@ export class Agent {
       ok,
       durationMs: Math.round(performance.now() - started),
       result: output,
+    });
+    ctx.trace?.tool({
+      step: ctx.step,
+      name: tool.name,
+      arguments: call.arguments,
+      summary,
+      risk: risk.level,
+      reasons: risk.reasons,
+      verdict,
+      ok,
+      durationMs: Math.round(performance.now() - started),
+      output,
+      changes,
     });
     yield { type: "tool_end", callId: call.id, tool: tool.name, verdict, ok, output, changes };
     // `done` is the one-line summary of a successful action, for the daily notes.

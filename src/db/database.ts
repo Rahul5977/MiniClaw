@@ -82,6 +82,35 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX reminders_due ON reminders(status, due_at);
   `,
+  `
+  -- I-8: flight recorder. One row per agent run plus its timeline of events.
+  CREATE TABLE runs (
+    id             TEXT PRIMARY KEY,
+    session_id     TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    user_text      TEXT NOT NULL,
+    context        TEXT NOT NULL,           -- JSON: messages at the first step (for replay), secrets redacted
+    tools          TEXT NOT NULL,           -- JSON: tool schemas offered to the model
+    status         TEXT NOT NULL DEFAULT 'running'
+                   CHECK (status IN ('running', 'done', 'stopped', 'error', 'step_limit')),
+    steps          INTEGER NOT NULL DEFAULT 0,
+    tool_calls     INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens  INTEGER NOT NULL DEFAULT 0,  -- estimated, summed over steps
+    error          TEXT,
+    started_at     INTEGER NOT NULL,
+    ended_at       INTEGER
+  );
+  CREATE INDEX runs_by_time ON runs(started_at);
+
+  CREATE TABLE run_events (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id  TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    at      INTEGER NOT NULL,                 -- milliseconds since the run started
+    type    TEXT NOT NULL CHECK (type IN ('llm', 'tool', 'notice')),
+    data    TEXT NOT NULL                     -- JSON, secrets redacted
+  );
+  CREATE INDEX run_events_by_run ON run_events(run_id, id);
+  `,
 ];
 
 export function openDatabase(path: string): Database {
