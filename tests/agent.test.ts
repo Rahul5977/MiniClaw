@@ -237,3 +237,25 @@ test("\"I've set a reminder\" without a successful reminder call is flagged", as
   const t = await setup([{ text: "I've set a reminder for you at 09:00." }, { text: "Sorry, I did not set it." }]);
   expect((await t.run("remind me at 9")).some((e) => e.type === "notice")).toBe(true);
 });
+
+test("a write sent together with the read it depends on is held back until the model saw the result", async () => {
+  const t = await setup(
+    [
+      { calls: [{ name: "read_file", arguments: '{"path":"n.txt"}' }, write("s.md", "- Bullet 1")] }, // premature write
+      { calls: [write("s.md", "- real fact")] },
+      { text: "Saved." },
+    ],
+    ["approve"],
+  );
+  await Bun.write(join(t.workspace, "n.txt"), "real fact");
+  await t.run("summarize n.txt into s.md");
+  expect(t.llm.seen[1]?.at(-1)?.content).toContain("Not run yet: you asked for this before seeing the result of read_file");
+  expect(readFileSync(join(t.workspace, "s.md"), "utf8")).toBe("- real fact");
+  expect(t.approver.asked).toBe(1); // the held-back write was never even proposed
+});
+
+test("independent writes in one step all run", async () => {
+  const t = await setup([{ calls: [write("a.md", "1"), write("b.md", "2")] }, { text: "ok" }], ["approve", "approve"]);
+  await t.run("write two files");
+  expect(existsSync(join(t.workspace, "a.md")) && existsSync(join(t.workspace, "b.md"))).toBe(true);
+});

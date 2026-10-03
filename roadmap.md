@@ -692,6 +692,7 @@ Material for the evaluation chapter: each failure mode was found in a live run, 
 | F13 | `null` for unused optional arguments | `"in_minutes": null` rejected a reminder | Treat `null` as not given for optional arguments |
 | F14 | Tool calls written as JSON text | Llama 3.1 replied `{"name": "write_file", "parameters": {…}}` | Accept it only when it is the whole reply and names a real tool (then the full pipeline applies) |
 | F15 | Misreading tools | Wrote the literal text `$(cat draft.txt)`; "created a folder" with `write_file`, making a file | Tool descriptions say content is literal and folders need `mkdir` |
+| F16 | Writes before reading | Asked to summarize a file into another, qwen sent `read_file` and `write_file` in one step and wrote placeholders (`- Bullet 1`) while claiming the real summary | When a step mixes reads with changes, the reads run and the changes are held back until the model has seen the result |
 
 Non-model bug found the same way: if input closed while an approval question was open, Bun's readline spun at
 100% CPU forever. Open questions now resolve as "no" when input closes.

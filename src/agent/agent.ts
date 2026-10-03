@@ -3,7 +3,7 @@ import type { ApprovalPolicy, Approver, Verdict } from "../security/approvals.ts
 import type { AuditLog } from "../security/audit.ts";
 import type { Guard } from "../security/guard.ts";
 import { applyTaint, TaintTracker } from "../security/taint.ts";
-import type { Risk, ToolContext, ToolRegistry } from "../tools/tool.ts";
+import type { Risk, Tool, ToolContext, ToolRegistry } from "../tools/tool.ts";
 import type { DailyNotes } from "../memory/notes.ts";
 import type { RunStatus, RunStore, RunTrace } from "../recorder/runs.ts";
 import { maxLevel } from "../security/risk.ts";
@@ -187,8 +187,20 @@ export class Agent {
         }
 
         turn.push({ role: "assistant", content: text, toolCalls: calls });
+        // A step that reads something and changes something at the same time means the model
+        // wrote before seeing what it read (small models then write placeholders like
+        // "- Bullet 1"). Run the reads now and hold the changes back until it has seen them.
+        const reads = calls.filter((c) => !changesSomething(tools.get(c.name)));
+        const heldBack = reads.length > 0 && reads.length < calls.length ? new Set(calls.filter((c) => !reads.includes(c))) : new Set<ToolCall>();
         for (const call of calls) {
           signal.throwIfAborted();
+          if (heldBack.has(call)) {
+            const readNames = [...new Set(reads.map((r) => r.name))].join(", ");
+            const output = `Not run yet: you asked for this before seeing the result of ${readNames}. Look at that result, then call ${call.name} again using the real content.`;
+            trace?.tool({ step, name: call.name, arguments: call.arguments, verdict: "held_back", ok: false, durationMs: 0, output });
+            turn.push({ role: "tool", toolCallId: call.id, content: output });
+            continue;
+          }
           const ctx = { workspace: this.deps.workspace, signal, sessionId: session.id, untrustedSources: untrusted, activeSkills, trace, step, taint };
           const { output, done, changed } = yield* this.execute(call, ctx);
           if (changed) changedSomething = true;
@@ -337,4 +349,9 @@ export function parseTextToolCall(text: string, toolNames: string[]): { name: st
   } catch {
     return null;
   }
+}
+
+/** Tools that change files or other state (as opposed to reading). Unknown tools count as reads. */
+function changesSomething(tool: Tool | undefined): boolean {
+  return !!tool && (tool.changesWorkspace || !!tool.changesState);
 }
