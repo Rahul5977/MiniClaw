@@ -50,8 +50,12 @@ export class AuditLog {
 
   constructor(private db: Database) {}
 
+  /**
+   * Unique even when several AuditLogs (e.g. the terminal chat and the gateway, in two
+   * processes) write to the same database in the same millisecond.
+   */
   nextId(): string {
-    return `${Date.now().toString(36)}-${(this.counter++).toString(36)}`;
+    return `${Date.now().toString(36)}-${(this.counter++).toString(36)}${crypto.randomUUID().slice(0, 6)}`;
   }
 
   record(entry: Omit<AuditEntry, "time">): void {

@@ -71,3 +71,14 @@ test("audit log stores redacted entries, newest first", () => {
   expect(latest).toMatchObject({ tool: "second", args: { key: "[REDACTED]" }, reasons: ["r"], ok: true });
   expect(earlier?.tool).toBe("first");
 });
+
+test("audit ids stay unique across several logs sharing one database", () => {
+  const db = openDatabase(":memory:");
+  const [a, b] = [new AuditLog(db), new AuditLog(db)];
+  const base = { session: "s", tool: "t", summary: "x", args: {}, risk: "low" as const, reasons: [], verdict: "auto" as const, ok: true, durationMs: 1, result: "" };
+  for (let i = 0; i < 50; i++) {
+    a.record({ ...base, id: a.nextId() });
+    b.record({ ...base, id: b.nextId() });
+  }
+  expect(a.recent(500)).toHaveLength(100);
+});
