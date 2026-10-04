@@ -1,15 +1,7 @@
 # Scene 1: setup check, a file task with a diff approval, and undo.
 Output demo/out/01-basics.mp4
 
-Set Shell "bash"
-Set FontSize 18
-Set Width 1280
-Set Height 760
-Set Padding 24
-Set Theme "Catppuccin Mocha"
-Set TypingSpeed 35ms
-Set WindowBar Colorful
-Set WindowBarSize 36
+Source demo/tapes/_settings.tape
 
 Hide
 Type "demo/setup.sh >/dev/null && cd /tmp/miniclaw-demo && export PS1='\[\e[1;35m\]miniclaw-demo\[\e[0m\] $ ' && alias miniclaw='bun ~/Desktop/OpenClaw/src/index.ts' && clear"
