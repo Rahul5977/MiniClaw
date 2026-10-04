@@ -52,3 +52,11 @@ test("duplicates are ignored and facts can't inject metadata or new lines", () =
 test("addDays handles month ends", () => {
   expect(addDays("2026-10-30", 3)).toBe("2026-11-02");
 });
+
+test("facts are appended without blank lines between them", () => {
+  const store = new FactStore(join(root, "e/MEMORY.md"));
+  store.add("One", undefined, day("2026-10-02"));
+  store.add("Two", undefined, day("2026-10-02"));
+  const file = readFileSync(store.path, "utf8");
+  expect(file).toContain("expiry date).\n\n- One <!-- added:2026-10-02 -->\n- Two <!-- added:2026-10-02 -->\n");
+});

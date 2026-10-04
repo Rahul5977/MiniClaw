@@ -33,6 +33,7 @@ async function api(path, { method = "GET", body } = {}) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  if (method !== "GET") refreshTopbar(); // badges and pause state change right away
   return data;
 }
 
@@ -575,6 +576,13 @@ async function route() {
     if (id_ === renderId) main.replaceChildren(h("div", { class: "card" }, tag("error", "bad"), " ", error.message));
   }
 }
+
+// Auto-refresh pauses while the tab is hidden; catch up as soon as it is visible again.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  refreshTopbar();
+  route();
+});
 
 window.addEventListener("hashchange", () => {
   route();

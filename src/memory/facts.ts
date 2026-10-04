@@ -88,7 +88,11 @@ export class FactStore {
     const existing = this.all(now).find((f) => f.id === factId(clean));
     if (existing) return existing;
     const fact = { text: clean, added: today(now), expires };
-    this.write([...this.read(), formatLine(fact)]);
+    // Append right after the last fact (no blank lines between facts); one blank line after the header.
+    const lines = this.read();
+    while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+    if (lines.length && !FACT_LINE.test(lines.at(-1)!)) lines.push("");
+    this.write([...lines, formatLine(fact)]);
     return { id: factId(clean), ...fact };
   }
 
