@@ -194,7 +194,7 @@ test("a claimed action without a tool call is flagged and retried once", async (
 });
 
 test("a repeated false claim ends with a warning to the user", async () => {
-  const t = await setup([{ text: "I've saved it." }, { text: "Saved it for you." }]);
+  const t = await setup([{ text: "I've saved it." }, { text: "I have saved it for you." }]);
   const events = await t.run("save it");
   const notices = events.filter((e) => e.type === "notice");
   expect(notices).toHaveLength(2);
