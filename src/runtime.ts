@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Agent } from "./agent/agent.ts";
 import { buildSystemPrompt } from "./agent/prompt.ts";
 import { Session } from "./agent/session.ts";
@@ -22,7 +22,7 @@ import { loadSkills, type Skill, type SkillProblem } from "./skills/loader.ts";
 import { listDirTool, readFileTool, writeFileTool } from "./tools/files.ts";
 import { createRecallNotesTool, createRememberTool } from "./tools/memory.ts";
 import { createReminderTools } from "./tools/reminders.ts";
-import { runShellTool } from "./tools/shell.ts";
+import { createShellTool } from "./tools/shell.ts";
 import { createSkillTool } from "./tools/skills.ts";
 import { ToolRegistry } from "./tools/tool.ts";
 import { webFetchTool } from "./tools/web.ts";
@@ -78,7 +78,7 @@ export async function createRuntime(config: Config, llm: LLMProvider): Promise<R
     readFileTool,
     listDirTool,
     writeFileTool,
-    runShellTool,
+    createShellTool({ sandbox: config.security.shellSandbox, readPaths: config.security.shellReadPaths.map((p) => resolve(p)) }),
     webFetchTool,
     createRememberTool(inbox),
     createRecallNotesTool(notes),

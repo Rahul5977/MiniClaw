@@ -353,6 +353,15 @@ Commands: `miniclaw skills` (list), `miniclaw skills revoke <name>` (ask again n
 ## Safety model
 
 - **Sandbox:** file tools only work inside `workspace/`. Path traversal, symlink escapes and `.git` are refused.
+- **Shell sandbox:** every shell command runs inside an OS sandbox (`sandbox-exec` on macOS, bubblewrap on Linux),
+  so even an approved command that the rules misjudged is contained:
+  - it can write only inside `workspace/` and its own temp folder;
+  - it can't read the rest of your home folder (`.env`, SSH keys, other projects), except the folders on your `PATH`;
+  - it has no network unless the risk rules flagged it as using the network (or installing software) and you approved it.
+
+  Without a sandbox (Linux without `bwrap`), `run_shell` refuses to run. `miniclaw doctor` checks this. Set
+  `security.shellSandbox` to `false` to run commands with your full rights, or add folders a tool needs to read to
+  `security.shellReadPaths`.
 - **Risk scoring (I-4):** every call is rated by fixed rules, not by the model, so a prompt injection can't argue its way past them.
   - `low` runs automatically.
   - `medium` asks, and you can allow it for the rest of the session.
@@ -365,7 +374,9 @@ Commands: `miniclaw skills` (list), `miniclaw skills revoke <name>` (ask again n
 - **Taint tracking (I-3):** a tool call that reuses text from a web page or file is flagged.
   - In a command, URL or path, the call becomes high risk with a "possible prompt injection" warning naming the source.
   - In content (a file's text, a reminder's text), "always allow" and plan approval stop applying, so you always see the call.
-- **No secrets to tools:** shell commands get a minimal environment (no API keys); `web_fetch` re-checks every redirect (no SSRF to `localhost`).
+- **No secrets to tools:** shell commands get a minimal environment (no API keys); `web_fetch` re-checks every redirect
+  and looks up each host right before connecting, so neither a redirect nor a name that resolves to a local address
+  reaches `localhost` or your network.
 - **Verified actions:** if the model claims "Added to your journal" but never called a tool, you see a warning,
   and the model is asked once to actually do it. Small models do this surprisingly often.
 - **Audit log:** every tool call is recorded in SQLite (`audit_log`), with secrets redacted.
@@ -428,6 +439,7 @@ src/
 ├── skills/                # SKILL.md loader, permission manifests (I-6), consent grants
 ├── security/
 │   ├── sandbox.ts         # workspace path checks
+│   ├── shellSandbox.ts    # OS sandbox for shell commands (sandbox-exec / bubblewrap)
 │   ├── risk.ts            # rule-based risk scoring (I-4)
 │   ├── approvals.ts       # approval policy (auto / session / plan / ask / block)
 │   └── audit.ts           # JSONL audit log with secret redaction

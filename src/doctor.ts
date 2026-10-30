@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { loadConfig, type Config } from "./config.ts";
 import { buildChannels } from "./gateway/channels.ts";
+import { detectSandbox } from "./security/shellSandbox.ts";
 
 type Status = "ok" | "warn" | "fail";
 interface Check {
@@ -35,6 +36,7 @@ export async function runDoctor(overrides: { model?: string } = {}): Promise<boo
     return false;
   }
 
+  checks.push(checkShellSandbox(config));
   checks.push(...(await checkLlm(config.llm, config.agent.contextTokens)));
   checks.push(...checkChatApps(config));
   print();
@@ -57,6 +59,24 @@ function checkChatApps(config: Config): Check[] {
     });
   }
   return checks;
+}
+
+/** run_shell refuses to run without a sandbox unless it is turned off. */
+function checkShellSandbox(config: Config): Check {
+  if (!config.security.shellSandbox) {
+    return {
+      status: "warn",
+      label: "Shell sandbox is off",
+      hint: "Approved shell commands run with your full rights. Set security.shellSandbox to true.",
+    };
+  }
+  const sandbox = detectSandbox();
+  if (sandbox) return { status: "ok", label: `Shell commands are sandboxed (${sandbox.name})` };
+  return {
+    status: "warn",
+    label: "No shell sandbox available, so run_shell will refuse to run",
+    hint: "On Linux install bubblewrap (e.g. `apt install bubblewrap`), or set security.shellSandbox to false.",
+  };
 }
 
 /** /undo (I-1) stores workspace checkpoints with git. */

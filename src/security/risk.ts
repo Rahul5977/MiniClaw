@@ -20,6 +20,9 @@ export function makeRisk(level: RiskLevel, scope: string, reasons: string[] = []
 
 type Rule = [level: RiskLevel, pattern: RegExp, reason: string];
 
+/** Approving a command with one of these reasons also lets it through the sandbox's network wall. */
+export const NETWORK_REASONS = ["uses the network (could send data out)", "installs or removes software"];
+
 const SHELL_RULES: Rule[] = [
   ["blocked", /\b(sudo|doas)\b|(^|[;&|]\s*)su(\s|$)/, "runs as administrator"],
   ["blocked", /\brm\s+(-\S+\s+)*("|')?(\/|~\/?|\$HOME\/?)("|')?(\s|\*|$)/, "deletes the root or home directory"],
@@ -28,10 +31,10 @@ const SHELL_RULES: Rule[] = [
   ["blocked", /\b(shutdown|reboot|halt|poweroff)\b/, "shuts down the computer"],
   ["blocked", /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|node|bun)\b/, "runs code downloaded from the internet"],
   ["high", /\brm\b|\bunlink\b|\bfind\b.*\s-delete\b/, "deletes files"],
-  ["high", /\b(curl|wget|nc|ncat|ssh|scp|sftp|rsync|ftp|telnet)\b/, "uses the network (could send data out)"],
+  ["high", /\b(curl|wget|nc|ncat|ssh|scp|sftp|rsync|ftp|telnet)\b|\bgit\s+(clone|fetch|pull|ls-remote|submodule)\b/, NETWORK_REASONS[0]!],
   ["high", /\b(chmod|chown)\b/, "changes file permissions"],
   ["high", /\b(kill|pkill|killall)\b/, "stops running programs"],
-  ["high", /\b(npm|pnpm|yarn|bun|pip3?|brew|apt(-get)?|cargo|gem)\s+(i|install|add|remove|uninstall)\b/, "installs or removes software"],
+  ["high", /\b(npm|pnpm|yarn|bun|pip3?|brew|apt(-get)?|cargo|gem)\s+(i|install|add|remove|uninstall)\b/, NETWORK_REASONS[1]!],
   ["high", /\bgit\s+(push|reset|clean|remote)\b/, "changes a git repository"],
   ["high", /(^|[\s=<>"'])(\/(?!dev\/null)|~)|(^|[^.\w])\.\.([^.\w]|$)/, "uses paths outside the workspace"],
   ["high", /\.env\b|id_rsa|id_ed25519|\.ssh\b|\.aws\b|\.gnupg\b|keychain|\.netrc\b/i, "touches files that usually hold secrets"],

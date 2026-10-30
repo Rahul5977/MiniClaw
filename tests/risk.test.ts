@@ -18,6 +18,7 @@ describe("shell commands", () => {
     "chmod +x run.sh",
     "pip install requests",
     "ls .git",
+    "git clone https://github.com/x/y",
     "r''m -rf notes",
     "r\\m old.txt",
     "cd .. && cat .bashrc",

@@ -30,6 +30,11 @@ export const ConfigSchema = z.object({
   security: z.object({
     // I-3: flag tool calls that reuse text from web pages or files. Turn off only to measure its effect.
     taintTracking: z.boolean().default(true),
+    // Run shell commands in an OS sandbox (sandbox-exec on macOS, bubblewrap on Linux). If none is
+    // available, run_shell refuses. Turn off only if you accept commands running with your full rights.
+    shellSandbox: z.boolean().default(true),
+    // Extra folders sandboxed commands may read, e.g. a tool installed under your home folder.
+    shellReadPaths: z.array(z.string()).default([]),
   }).prefault({}),
   gateway: z.object({
     // Localhost only by default; expose webhooks with a tunnel (ngrok) instead of opening the port.
