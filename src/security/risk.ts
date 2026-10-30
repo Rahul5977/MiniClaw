@@ -1,3 +1,5 @@
+import dns from "node:dns/promises";
+import { isIP } from "node:net";
 import type { Risk, RiskLevel } from "../tools/tool.ts";
 
 /**
@@ -73,13 +75,20 @@ export function assessShellCommand(command: string): Risk {
 const PRIVATE_HOST =
   /^(localhost|.*\.localhost|.*\.local|.*\.internal|0\.0\.0\.0|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|\[?::1?\]?|\[?f[cd][0-9a-f:]*\]?|\[?fe[89ab][0-9a-f:]*\]?)$/i;
 
-/** IPv4-mapped IPv6 (`[::ffff:7f00:1]`, how URL writes ::ffff:127.0.0.1) as the IPv4 address it reaches. */
+/**
+ * IPv4-mapped IPv6 as the IPv4 address it reaches: `[::ffff:7f00:1]` (how URL writes
+ * ::ffff:127.0.0.1) or `::ffff:127.0.0.1` (how DNS lookups may return it).
+ */
 function unmapIpv6(host: string): string {
-  const mapped = host.match(/^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/i);
+  const dotted = host.match(/^\[?::ffff:(\d+\.\d+\.\d+\.\d+)\]?$/i);
+  if (dotted) return dotted[1]!;
+  const mapped = host.match(/^\[?::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]?$/i);
   if (!mapped) return host;
   const [hi, lo] = [parseInt(mapped[1]!, 16), parseInt(mapped[2]!, 16)];
   return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
 }
+
+const isPrivateHost = (host: string) => PRIVATE_HOST.test(host) || PRIVATE_HOST.test(unmapIpv6(host));
 
 /** Query values or path segments longer than this look like smuggled data. */
 const LONG_VALUE = 48;
@@ -102,7 +111,7 @@ export function assessUrl(raw: string): Risk {
   let level: RiskLevel = "medium";
   const reasons: string[] = [`downloads content from ${host} (treated as untrusted)`];
 
-  if (PRIVATE_HOST.test(host) || PRIVATE_HOST.test(unmapIpv6(host))) {
+  if (isPrivateHost(host)) {
     level = "high";
     reasons.push("reaches your computer or local network");
   }
@@ -124,4 +133,50 @@ export function assessUrl(raw: string): Risk {
     reasons.push("contains credentials in the URL");
   }
   return { level, reasons, scope: `web_fetch:${host}`, sessionApprovable: level === "medium" };
+}
+
+const LOOKUP_TIMEOUT_MS = 3_000;
+
+/** Every address a host name resolves to; IP literals are returned as they are. */
+export async function resolveHost(host: string): Promise<string[]> {
+  const bare = host.replace(/^\[|\]$/g, "");
+  if (isIP(bare)) return [bare];
+  const lookup = dns.lookup(bare, { all: true, verbatim: true });
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`looking up ${bare} took too long`)), LOOKUP_TIMEOUT_MS).unref(),
+  );
+  return (await Promise.race([lookup, timeout])).map((a) => a.address);
+}
+
+/**
+ * The private address a public-looking host name resolves to, if any. Names like
+ * 127.0.0.1.nip.io, or a DNS rebinding attack, would otherwise pass assessUrl's
+ * name check and reach your computer or local network. Throws if the lookup fails.
+ */
+export async function privateAddressBehind(raw: string): Promise<string | null> {
+  const host = new URL(raw).hostname;
+  if (isPrivateHost(host)) return null; // already judged as local by assessUrl
+  return (await resolveHost(host)).find(isPrivateHost) ?? null;
+}
+
+/** assessUrl plus a DNS lookup: blocks public names that lead to a private address. */
+export async function assessUrlResolved(raw: string): Promise<Risk> {
+  const risk = assessUrl(raw);
+  if (risk.level === "blocked") return risk;
+  let address: string | null;
+  try {
+    address = await privateAddressBehind(raw);
+  } catch {
+    return risk; // unresolvable now; web_fetch looks it up again before connecting
+  }
+  if (!address) return risk;
+  return {
+    ...risk,
+    level: "blocked",
+    reasons: [
+      ...risk.reasons,
+      `resolves to ${address} on your computer or local network (use that address or a .local name directly if you meant it)`,
+    ],
+    sessionApprovable: false,
+  };
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { assessUrl, maxLevel } from "../security/risk.ts";
+import { assessUrl, assessUrlResolved, maxLevel, privateAddressBehind } from "../security/risk.ts";
 import { truncate, untrusted } from "./format.ts";
 import { defineTool } from "./tool.ts";
 
@@ -91,7 +91,7 @@ export const webFetchTool = defineTool({
   }),
   changesWorkspace: false,
   targetHint: "full URL",
-  assess: (args) => assessUrl(args.url),
+  assess: (args) => assessUrlResolved(args.url),
   assessTarget: (target) => assessUrl(target),
   summarize: (args) => `fetch ${args.url}`,
   async run(args, ctx) {
@@ -101,8 +101,17 @@ export const webFetchTool = defineTool({
     let response: Response;
 
     // Follow redirects by hand so each hop is re-checked: an approved public page
-    // must not be able to bounce us to localhost or a more dangerous URL.
+    // must not be able to bounce us to localhost or a more dangerous URL. Each host is
+    // looked up again right before connecting, so a name that resolved to a public
+    // address at approval time can't be switched to a local one (DNS rebinding).
     for (let hop = 0; ; hop++) {
+      let address: string | null;
+      try {
+        address = await privateAddressBehind(url);
+      } catch (error) {
+        return `Could not look up ${new URL(url).hostname}: ${(error as Error).message}.`;
+      }
+      if (address) return `Refused to fetch ${url}: it resolves to ${address} on your computer or local network.`;
       response = await fetch(url, { redirect: "manual", signal, headers: { "user-agent": "MiniClaw/1.0" } });
       const location = response.headers.get("location");
       if (response.status < 300 || response.status >= 400 || !location) break;

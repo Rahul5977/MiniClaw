@@ -1,4 +1,5 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, spyOn, test } from "bun:test";
+import dns from "node:dns/promises";
 import { htmlToText, pickPath, webFetchTool } from "../src/tools/web.ts";
 
 const server = Bun.serve({
@@ -60,4 +61,32 @@ test("fields shrink large JSON responses to what was asked", async () => {
   expect(out).toContain('*.commit.author.date: ["2026-10-01","2026-09-30"]');
   expect(out).toContain("missing: (not found)");
   expect(out.length).toBeLessThan(500);
+});
+
+/** Makes DNS return these addresses, one lookup after another (the last one repeats). */
+function fakeDns(...addresses: string[]) {
+  let call = 0;
+  return spyOn(dns, "lookup").mockImplementation((async () => {
+    const address = addresses[Math.min(call++, addresses.length - 1)]!;
+    return [{ address, family: address.includes(":") ? 6 : 4 }];
+  }) as never);
+}
+afterEach(() => (dns.lookup as { mockRestore?: () => void }).mockRestore?.());
+
+test("a public name that resolves to a local address is blocked at approval", async () => {
+  fakeDns("127.0.0.1");
+  const risk = await webFetchTool.assess({ url: "http://127.0.0.1.nip.io/admin" }, ctx);
+  expect(risk.level).toBe("blocked");
+  expect(risk.reasons.at(-1)).toContain("resolves to 127.0.0.1");
+});
+
+test("a name rebound to a local address after approval is refused at fetch time", async () => {
+  fakeDns("93.184.215.14", "::ffff:10.0.0.1");
+  expect((await webFetchTool.assess({ url: "http://rebind.example/" }, ctx)).level).toBe("medium");
+  expect(await webFetchTool.run({ url: "http://rebind.example/" }, ctx)).toContain("resolves to ::ffff:10.0.0.1");
+});
+
+test("a name that can't be looked up is not fetched", async () => {
+  spyOn(dns, "lookup").mockRejectedValue(new Error("ENOTFOUND"));
+  expect(await webFetchTool.run({ url: "http://nowhere.example/" }, ctx)).toContain("Could not look up nowhere.example");
 });
