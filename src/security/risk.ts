@@ -31,11 +31,18 @@ const SHELL_RULES: Rule[] = [
   ["high", /\b(kill|pkill|killall)\b/, "stops running programs"],
   ["high", /\b(npm|pnpm|yarn|bun|pip3?|brew|apt(-get)?|cargo|gem)\s+(i|install|add|remove|uninstall)\b/, "installs or removes software"],
   ["high", /\bgit\s+(push|reset|clean|remote)\b/, "changes a git repository"],
-  ["high", /(^|[\s=<>"'])(\/(?!dev\/null)|~)|\.\.\//, "uses paths outside the workspace"],
+  ["high", /(^|[\s=<>"'])(\/(?!dev\/null)|~)|(^|[^.\w])\.\.([^.\w]|$)/, "uses paths outside the workspace"],
   ["high", /\.env\b|id_rsa|id_ed25519|\.ssh\b|\.aws\b|\.gnupg\b|keychain|\.netrc\b/i, "touches files that usually hold secrets"],
   ["high", /\$\(|`|\beval\b|\bexec\b|\bsource\b/, "builds commands dynamically (hard to check)"],
+  ["high", /\|\s*(sh|bash|zsh|dash|python3?|node|bun|perl|ruby|php)\b/, "pipes data into an interpreter (runs hidden code)"],
   ["high", /\.git\b/, "touches a .git directory"],
 ];
+
+/**
+ * The shell drops quotes and backslashes before running a word, so `s''udo` and `r\m` are
+ * sudo and rm. Rules are checked against both the raw command and this unquoted form.
+ */
+const unquote = (command: string) => command.replace(/['"\\]/g, "");
 
 /** Characters that make a command more than "one program with arguments". */
 const COMPOUND = /[|;&<>`$(){}\n\\]/;
@@ -43,15 +50,16 @@ const COMPOUND = /[|;&<>`$(){}\n\\]/;
 export function assessShellCommand(command: string): Risk {
   let level: RiskLevel = "medium";
   const reasons: string[] = [];
+  const unquoted = unquote(command);
   for (const [ruleLevel, pattern, reason] of SHELL_RULES) {
-    if (pattern.test(command)) {
+    if (pattern.test(command) || pattern.test(unquoted)) {
       level = maxLevel(level, ruleLevel);
       reasons.push(reason);
     }
   }
   if (reasons.length === 0) reasons.push("runs a shell command in the workspace");
 
-  const program = command.trim().split(/\s+/)[0] ?? "";
+  const program = unquoted.trim().split(/\s+/)[0] ?? "";
   const simple = !COMPOUND.test(command);
   return {
     level,
@@ -63,7 +71,21 @@ export function assessShellCommand(command: string): Risk {
 }
 
 const PRIVATE_HOST =
-  /^(localhost|.*\.local|.*\.internal|0\.0\.0\.0|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|\[?::1\]?|\[?f[cd][0-9a-f:]*\]?)$/i;
+  /^(localhost|.*\.localhost|.*\.local|.*\.internal|0\.0\.0\.0|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|\[?::1?\]?|\[?f[cd][0-9a-f:]*\]?|\[?fe[89ab][0-9a-f:]*\]?)$/i;
+
+/** IPv4-mapped IPv6 (`[::ffff:7f00:1]`, how URL writes ::ffff:127.0.0.1) as the IPv4 address it reaches. */
+function unmapIpv6(host: string): string {
+  const mapped = host.match(/^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/i);
+  if (!mapped) return host;
+  const [hi, lo] = [parseInt(mapped[1]!, 16), parseInt(mapped[2]!, 16)];
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+}
+
+/** Query values or path segments longer than this look like smuggled data. */
+const LONG_VALUE = 48;
+/** Path segments get more room: article slugs are often long. */
+const LONG_SEGMENT = 64;
+const LONG_TOTAL = 120;
 
 export function assessUrl(raw: string): Risk {
   let url: URL;
@@ -80,13 +102,20 @@ export function assessUrl(raw: string): Risk {
   let level: RiskLevel = "medium";
   const reasons: string[] = [`downloads content from ${host} (treated as untrusted)`];
 
-  if (PRIVATE_HOST.test(host)) {
+  if (PRIVATE_HOST.test(host) || PRIVATE_HOST.test(unmapIpv6(host))) {
     level = "high";
     reasons.push("reaches your computer or local network");
   }
-  // Long query values are how injected instructions smuggle data out ("?q=<your notes>").
+  // Long query values or path segments are how injected instructions smuggle data out
+  // ("?q=<your notes>" or "/<your notes in base64>").
   const values = [...url.searchParams.values()];
-  if (url.search.length > 120 || values.some((v) => v.length > 48)) {
+  const segments = url.pathname.split("/");
+  if (
+    url.search.length > LONG_TOTAL ||
+    values.some((v) => v.length > LONG_VALUE) ||
+    url.pathname.length > LONG_TOTAL ||
+    segments.some((s) => s.length > LONG_SEGMENT)
+  ) {
     level = "high";
     reasons.push("sends a lot of data in the URL (possible data leak)");
   }

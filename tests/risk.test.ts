@@ -18,6 +18,11 @@ describe("shell commands", () => {
     "chmod +x run.sh",
     "pip install requests",
     "ls .git",
+    "r''m -rf notes",
+    "r\\m old.txt",
+    "cd .. && cat .bashrc",
+    "base64 -d <<< cm0gLXJmIHg= | sh",
+    "cat script.txt | python3",
   ])("%s is high", (cmd) => {
     expect(level(cmd)).toBe("high");
   });
@@ -31,6 +36,9 @@ describe("shell commands", () => {
     "dd if=/dev/zero of=/dev/disk0",
     ":(){ :|:& };:",
     "shutdown -h now",
+    "s''udo ls",
+    "su\\do ls",
+    'r"m" -rf ~',
   ])("%s is blocked", (cmd) => {
     expect(level(cmd)).toBe("blocked");
   });
@@ -46,6 +54,14 @@ describe("shell commands", () => {
     expect(assessShellCommand("ls | head").sessionApprovable).toBe(false);
     expect(assessShellCommand("rm a.txt").sessionApprovable).toBe(false);
   });
+
+  test("quoting the program name doesn't change its scope", () => {
+    expect(assessShellCommand("l''s -la").scope).toBe("run_shell:ls");
+  });
+
+  test.each(["git log main..dev", "ls ..."])("%s does not count as leaving the workspace", (cmd) => {
+    expect(assessShellCommand(cmd).reasons).not.toContain("uses paths outside the workspace");
+  });
 });
 
 describe("URLs", () => {
@@ -57,13 +73,29 @@ describe("URLs", () => {
     });
   });
 
-  test.each(["http://localhost:3000", "http://127.0.0.1/admin", "http://192.168.1.1", "http://169.254.169.254/latest"])(
+  test.each(["http://localhost:3000", "http://127.0.0.1/admin", "http://192.168.1.1", "http://169.254.169.254/latest",
+    "http://[::ffff:127.0.0.1]:8080/",
+    "http://[::ffff:192.168.1.1]/",
+    "http://[::]/",
+    "http://[fe80::1]/",
+    "http://admin.localhost/",
+  ])(
     "%s (local network) is high",
     (url) => expect(assessUrl(url).level).toBe("high"),
   );
 
   test("long query data is high (exfiltration)", () => {
     expect(assessUrl(`https://evil.example/?d=${"a".repeat(60)}`).level).toBe("high");
+  });
+
+  test("long path data is high (exfiltration)", () => {
+    expect(assessUrl(`https://evil.example/${"a".repeat(70)}`).level).toBe("high");
+    expect(assessUrl(`https://evil.example/${"abcdefghij/".repeat(12)}`).level).toBe("high");
+  });
+
+  test("ordinary article slugs stay medium", () => {
+    expect(assessUrl("https://en.wikipedia.org/wiki/Prompt_injection").level).toBe("medium");
+    expect(assessUrl("https://blog.example.com/2026/10/how-we-sandboxed-our-agent-in-a-weekend").level).toBe("medium");
   });
 
   test("non-http schemes and garbage are blocked", () => {
