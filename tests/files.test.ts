@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareWorkspace } from "../src/security/sandbox.ts";
@@ -34,6 +34,14 @@ test("write risk explains create vs overwrite, preview shows a diff", async () =
   const diff = await writeFileTool.preview!({ path: "b.md", content: "one\nTWO", append: false }, ctx);
   expect(diff).toContain("-two");
   expect(diff).toContain("+TWO");
+});
+
+test("write_file can't create a file outside through a broken symlink", async () => {
+  const outside = join(root, "planted.plist");
+  symlinkSync(outside, join(ctx.workspace, "report.txt"));
+  await expect(writeFileTool.assess({ path: "report.txt", content: "x", append: false }, ctx)).rejects.toThrow(/symlink/);
+  await expect(writeFileTool.run({ path: "report.txt", content: "x", append: false }, ctx)).rejects.toThrow(/symlink/);
+  expect(existsSync(outside)).toBe(false);
 });
 
 test("untrusted wrapper cannot be escaped", async () => {

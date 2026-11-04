@@ -25,6 +25,27 @@ test("symlinks pointing outside are rejected", () => {
   expect(() => resolveInWorkspace(ws, "escape/anything.txt")).toThrow(/symlink/);
 });
 
+test("broken symlinks are judged by where they point, not where they sit", () => {
+  // Their targets don't exist yet, so realpath alone can't see where they lead.
+  symlinkSync(join(root, "planted.txt"), join(ws, "dangling-file"));
+  symlinkSync(join(root, "missing-dir"), join(ws, "dangling-dir"));
+  symlinkSync("../planted-relative.txt", join(ws, "dangling-relative"));
+  expect(() => resolveInWorkspace(ws, "dangling-file")).toThrow(/symlink/);
+  expect(() => resolveInWorkspace(ws, "dangling-dir/new.txt")).toThrow(/symlink/);
+  expect(() => resolveInWorkspace(ws, "dangling-relative")).toThrow(/symlink/);
+});
+
+test("a broken symlink to a new file inside the workspace still works", () => {
+  symlinkSync("drafts/later.md", join(ws, "later-link"));
+  expect(resolveInWorkspace(ws, "later-link")).toBe(join(ws, "drafts/later.md"));
+});
+
+test("symlink loops are refused instead of hanging", () => {
+  symlinkSync("loop-b", join(ws, "loop-a"));
+  symlinkSync("loop-a", join(ws, "loop-b"));
+  expect(() => resolveInWorkspace(ws, "loop-a")).toThrow(/too many symlinks/);
+});
+
 test(".git directories are off-limits", () => {
   expect(() => resolveInWorkspace(ws, ".git/config")).toThrow(/\.git/);
 });

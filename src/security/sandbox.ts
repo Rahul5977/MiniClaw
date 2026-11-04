@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export class SandboxError extends Error {}
@@ -20,10 +20,7 @@ export function resolveInWorkspace(workspace: string, userPath: string): string 
     throw new SandboxError(`"${userPath}" is outside the workspace. Use paths relative to the workspace.`);
   }
 
-  // Follow symlinks on the part of the path that already exists.
-  let existing = target;
-  while (!existsSync(existing)) existing = dirname(existing);
-  const real = join(realpathSync(existing), relative(existing, target));
+  const real = realLocation(target);
   if (!isInside(workspace, real)) {
     throw new SandboxError(`"${userPath}" points outside the workspace through a symlink.`);
   }
@@ -32,6 +29,30 @@ export function resolveInWorkspace(workspace: string, userPath: string): string 
     throw new SandboxError(`"${userPath}" is inside a .git directory, which is off-limits.`);
   }
   return real;
+}
+
+/** Most symlinks followed in one path, like the OS limit; more means a loop. */
+const MAX_SYMLINKS = 40;
+
+/**
+ * Where `target` really leads, following every symlink in it, including broken ones.
+ * realpath can only resolve the part of a path that exists, and a broken symlink
+ * (one whose target is missing) counts as not existing. Stopping there would judge
+ * the link by its own location, while a write through it creates its target, which
+ * may be anywhere ("workspace/report.txt" → "~/Library/LaunchAgents/evil.plist").
+ * So a broken link is followed by hand and its target is resolved in turn.
+ */
+function realLocation(target: string, hops = 0): string {
+  let existing = target;
+  while (!existsSync(existing)) {
+    if (lstatSync(existing, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      if (hops >= MAX_SYMLINKS) throw new SandboxError(`"${target}" has too many symlinks (or a symlink loop).`);
+      const pointsTo = resolve(dirname(existing), readlinkSync(existing));
+      return realLocation(join(pointsTo, relative(existing, target)), hops + 1);
+    }
+    existing = dirname(existing);
+  }
+  return join(realpathSync(existing), relative(existing, target));
 }
 
 /** Path relative to the workspace, for display and approval scopes ("." for the root). */
